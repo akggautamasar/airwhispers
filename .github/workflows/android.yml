@@ -50,25 +50,35 @@ jobs:
 
       - name: Unit tests (normalisation, queue, assist rules)
         working-directory: android
-        run: gradle --no-daemon --stacktrace testStandaloneDebugUnitTest
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          gradle --no-daemon --stacktrace testStandaloneDebugUnitTest \
+            2>&1 | tee "$GITHUB_WORKSPACE/build-logs/unit-tests.log"
 
       - name: Assemble release APK (standalone flavour)
         working-directory: android
         env:
           VERSION_NAME: ${{ inputs.version_name }}
         run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
           gradle --no-daemon --stacktrace assembleStandaloneRelease \
             -Pairwhispers.versionName="${VERSION_NAME:-1.0.0}" \
-            -Pairwhispers.versionCode="${{ github.run_number }}"
+            -Pairwhispers.versionCode="${{ github.run_number }}" \
+            2>&1 | tee "$GITHUB_WORKSPACE/build-logs/assemblestandalonerelease.log"
 
       - name: Assemble debug APK
         working-directory: android
         env:
           VERSION_NAME: ${{ inputs.version_name }}
         run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
           gradle --no-daemon --stacktrace assembleStandaloneDebug \
             -Pairwhispers.versionName="${VERSION_NAME:-1.0.0}" \
-            -Pairwhispers.versionCode="${{ github.run_number }}"
+            -Pairwhispers.versionCode="${{ github.run_number }}" \
+            2>&1 | tee "$GITHUB_WORKSPACE/build-logs/assemblestandalonedebug.log"
 
       - name: Compile the FCM flavour (cloud push)
         working-directory: android
@@ -85,6 +95,20 @@ jobs:
             sha256sum "$apk" > "$apk.sha256"
           done
           ls -la
+
+      # GitHub's log download endpoint is not reachable from every environment, so the
+      # raw output and the HTML/JUnit reports are published as an artifact as well.
+      - name: Upload build logs and test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-logs
+          path: |
+            build-logs/**
+            android/app/build/reports/tests/**
+            android/app/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4

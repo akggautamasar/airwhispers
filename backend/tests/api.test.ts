@@ -21,7 +21,12 @@ interface Harness {
 }
 
 async function harness(): Promise<Harness> {
-  const config = loadConfig({ NODE_ENV: "test", JWT_SECRET: "test-secret-that-is-long-enough-1234" });
+  const config = loadConfig({
+    NODE_ENV: "test",
+    JWT_SECRET: "test-secret-that-is-long-enough-1234",
+    // Keep the test output readable; the assertions do not depend on logging.
+    LOG_LEVEL: "silent",
+  });
   const store = new MemoryStore();
   const hub = new RealtimeHub({
     path: "/api/v1/realtime",

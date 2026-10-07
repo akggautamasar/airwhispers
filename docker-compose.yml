@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airwhispers
+      POSTGRES_PASSWORD: airwhispers
+      POSTGRES_DB: airwhispers
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airwhispers -d airwhispers"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      PORT: "8080"
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://airwhispers:airwhispers@postgres:5432/airwhispers
+      # Replace before exposing this to anything real: openssl rand -base64 48
+      JWT_SECRET: change-me-dev-only-secret-at-least-32-chars
+      TRUST_PROXY: "true"
+      LOG_LEVEL: info
+      PUSH_INCLUDES_CONTENT: "false"
+      # Optional push (all three required to enable FCM):
+      # FCM_PROJECT_ID: your-firebase-project
+      # FCM_CLIENT_EMAIL: firebase-adminsdk-xxx@your-project.iam.gserviceaccount.com
+      # FCM_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -130,7 +130,7 @@ object TextNormalizer {
                 mode == EmojiMode.IGNORE -> false
                 name == null -> false
                 mode == EmojiMode.READ_ALL -> true
-                else -> DESCRIPTION_FLAG in name.flags && !isRedundant(name, lower)
+                else -> IMPORTANT in name.flags && !isRedundant(name, lower)
             }
             if (speakIt && name != null) {
                 // Keep the emoji's position inside the sentence.

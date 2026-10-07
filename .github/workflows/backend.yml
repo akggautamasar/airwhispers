@@ -42,6 +42,8 @@ jobs:
 
       - name: Unit & API tests
         run: npm test
+        env:
+          LOG_LEVEL: silent
 
       - name: Smoke test against a live server
         run: |

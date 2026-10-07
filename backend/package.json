@@ -11,8 +11,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "dev": "node --watch --experimental-strip-types src/server.ts",
-    "test": "npm run build && node --test dist/tests/",
-    "schema": "node --experimental-strip-types scripts/apply-schema.ts"
+    "test": "npm run build && node --test \"dist/tests/*.test.js\"",
+    "schema": "node --experimental-strip-types scripts/apply-schema.ts",
+    "test:only": "node --test \"dist/tests/*.test.js\""
   },
   "dependencies": {
     "fastify": "^5.0.0",
