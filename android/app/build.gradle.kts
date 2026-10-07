@@ -24,7 +24,7 @@ val releaseKeystore = keystoreProperties.getProperty("storeFile")?.let { rootPro
 val hasReleaseKeystore = releaseKeystore?.exists() == true
 
 val versionCodeOverride = (project.findProperty("airwhispers.versionCode") as String?)?.toInt() ?: 1
-val versionNameOverride = (project.findProperty("airwhispers.versionName") as String?) ?: "1.0.0"
+val versionNameOverride = (project.findProperty("airwhispers.versionName") as String?) ?: "1.1.2"
 val defaultBackendUrl = (project.findProperty("airwhispers.defaultBackendUrl") as String?) ?: ""
 
 android {
