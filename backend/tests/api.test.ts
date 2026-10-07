@@ -632,4 +632,85 @@ describe("devices, health and codes", () => {
     assert.equal(normaliseCode(" k7 m2 pq "), "k7m2pq");
     assert.equal(normaliseCode("k7m2pq"), "k7m2pq");
   });
+  test("a malformed id is a bad request, never a server error", async () => {
+    const h = await harness();
+    try {
+      const anu = await registerDevice(h.app, "Anu");
+      const bob = await registerDevice(h.app, "Bob");
+      const open = await h.app.inject({
+        method: "POST",
+        url: "/api/v1/conversations",
+        headers: anu.auth(),
+        payload: { code: bob.code },
+      });
+      const conversationId = open.json().conversation.id as string;
+      const sent = await h.app.inject({
+        method: "POST",
+        url: `/api/v1/conversations/${conversationId}/messages`,
+        headers: anu.auth(),
+        payload: { clientMessageId: "malformed-1", text: "Are you there?", priority: "NORMAL" },
+      });
+      assert.equal(sent.statusCode, 201, sent.body);
+
+      // Every `:id` in this API is a uuid column, so a malformed one used to
+      // reach PostgreSQL as `invalid input syntax for type uuid` (22P02) and
+      // come back as a 500 for what is a client mistake. The near-miss matters:
+      // it satisfied a looser pattern and failed only at the database.
+      const malformed = ["not-a-uuid", "deadbeef-cafe", "1"];
+      const routes: Array<[string, string, Record<string, unknown> | undefined]> = [
+        ["GET", "/api/v1/conversations/:id/messages", undefined],
+        ["POST", "/api/v1/conversations/:id/messages", { clientMessageId: "malformed-2", text: "hi" }],
+        ["PATCH", "/api/v1/conversations/:id/trust", { trusted: true }],
+        ["POST", "/api/v1/messages/:id/read", undefined],
+        ["POST", "/api/v1/messages/:id/spoken", undefined],
+      ];
+      for (const id of malformed) {
+        for (const [method, template, payload] of routes) {
+          const url = template.replace(":id", id);
+          const response = await h.app.inject({
+            method: method as "GET",
+            url,
+            headers: anu.auth(),
+            ...(payload ? { payload } : {}),
+          });
+          assert.equal(
+            response.statusCode,
+            400,
+            `${method} ${url} must be rejected as a bad request, not ${response.statusCode}`,
+          );
+          assert.equal(response.json().error.code, "bad_request");
+        }
+      }
+
+      // A percent-encoded id is still just a bad id.
+      const encoded = await h.app.inject({
+        method: "GET",
+        url: "/api/v1/conversations/..%2F..%2Fetc%2Fpasswd/messages",
+        headers: anu.auth(),
+      });
+      assert.equal(encoded.statusCode, 400, "a percent-encoded id is a bad id too");
+
+      // A well-formed but unknown id stays a 404: the shape check must not
+      // swallow the normal not-found path.
+      const unknown = "00000000-0000-4000-8000-000000000000";
+      const notFound = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/conversations/${unknown}/messages`,
+        headers: anu.auth(),
+      });
+      assert.equal(notFound.statusCode, 404);
+      assert.equal(notFound.json().error.code, "not_found");
+
+      // And the device id is *not* validated as a uuid: that column is text and
+      // the id is chosen by the client.
+      const forget = await h.app.inject({
+        method: "DELETE",
+        url: `/api/v1/devices/${anu.deviceId}`,
+        headers: anu.auth(),
+      });
+      assert.equal(forget.statusCode, 204, "a client-chosen device id is not a uuid");
+    } finally {
+      await h.close();
+    }
+  });
 });

@@ -92,7 +92,7 @@ Android app uses — a test bench, not a second product.
 cd backend
 npm ci
 npm run dev            # in-memory store, demo console at /
-npm test               # 20 API tests: identity, consent, messaging, rate limits
+npm test               # 21 API tests: identity, consent, messaging, rate limits
 node scripts/smoke.mjs # live end-to-end check (two devices, socket, whisper consent)
 ```
 
