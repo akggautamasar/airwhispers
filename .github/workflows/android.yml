@@ -56,6 +56,16 @@ jobs:
           gradle --no-daemon --stacktrace testStandaloneDebugUnitTest \
             2>&1 | tee "$GITHUB_WORKSPACE/build-logs/unit-tests.log"
 
+      # Renders the failure inside the check-run annotation, which stays readable even
+      # when the raw log or the uploaded artifacts are not reachable.
+      - name: Explain the failure
+        if: failure()
+        run: |
+          python3 .github/scripts/failure-summary.py
+          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
+            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
+          fi
+
       - name: Assemble release APK (standalone flavour)
         working-directory: android
         env:
