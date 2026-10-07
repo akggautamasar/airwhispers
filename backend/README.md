@@ -1,7 +1,7 @@
 # AirWhispers backend
 
-Node 22 + TypeScript + Fastify. Stores messages in PostgreSQL for production, or in memory
-for development and tests. Sends realtime events over WebSocket and optional push through
+Node 22 (>= 22.6, for `--experimental-strip-types`) + TypeScript + Fastify. Stores messages
+in PostgreSQL for production, or in memory for development and tests. Sends realtime events over WebSocket and optional push through
 Firebase Cloud Messaging (HTTP v1, no Google SDK required).
 
 ## Quick start
