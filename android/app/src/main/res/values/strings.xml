@@ -12,7 +12,7 @@
     <string name="auth_welcome_title">Welcome to AirWhispers</string>
     <string name="auth_welcome_subtitle">Hear your messages while you are on a call.</string>
     <string name="auth_backend_label">Server address</string>
-    <string name="auth_backend_helper">Point this at your AirWhispers server. Use https:// for anything outside your own network.</string>
+    <string name="auth_backend_helper">The address of an AirWhispers server. Run your own with two commands (see below), or ask whoever invited you. Use https:// for anything outside your own network.</string>
     <string name="auth_backend_insecure_warning">This address is not encrypted (http://). Messages could be read by others on the network.</string>
     <string name="auth_display_name">Display name</string>
     <string name="auth_continue">Continue</string>
@@ -84,7 +84,6 @@ Say hello…</string>
     <string name="settings_account">This device</string>
     <string name="settings_security">Security</string>
     <string name="settings_about">About</string>
-    <string name="settings_sign_out">Sign out</string>
 
     <!-- Notifications -->
     <string name="notif_channel_messages">Messages</string>
@@ -106,7 +105,6 @@ Say hello…</string>
     <string name="error_generic">Something went wrong. Please try again.</string>
     <string name="error_offline">You are offline. Messages will be sent when the connection returns.</string>
     <string name="error_server_unreachable">Can’t reach the server.</string>
-    <string name="error_session_expired">Your session expired. Please sign in again.</string>
     <string name="tts_unavailable">Speech is unavailable. Check that a text-to-speech engine is installed and enabled in Android settings.</string>
 
     <string name="action_retry">Retry</string>

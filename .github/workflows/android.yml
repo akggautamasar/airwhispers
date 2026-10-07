@@ -108,6 +108,16 @@ jobs:
 
       # GitHub's log download endpoint is not reachable from every environment, so the
       # raw output and the HTML/JUnit reports are published as an artifact as well.
+      # Same idea as the step above, but for failures in the APK assembly steps: the
+      # Gradle log is on the runner even when the log download API is unreachable.
+      - name: Explain the failure (build steps)
+        if: failure()
+        run: |
+          python3 .github/scripts/failure-summary.py
+          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
+            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
+          fi
+
       - name: Upload build logs and test reports
         if: always()
         uses: actions/upload-artifact@v4
