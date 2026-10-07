@@ -78,6 +78,18 @@ bash scripts/make-keystore.sh          # demo signing identity -> keystore/*.p12
 Requires JDK 17 and the Android SDK (compileSdk 35). CI does the same thing and attaches
 the APK to a GitHub Release — see [.github/workflows/android.yml](.github/workflows/android.yml).
 
+### Cutting a release from CI
+
+```bash
+git tag -a android-v1.0.2 -m "AirWhispers Android v1.0.2"
+git push origin android-v1.0.2        # builds, tests, signs and publishes the APK
+```
+
+A tag push (or a manual `workflow_dispatch`, available once this workflow is on the default
+branch) runs the unit tests, assembles the `standalone` release and debug APKs plus the
+optional `fcm` flavour, records SHA-256 checksums, and creates a GitHub Release with all of
+them attached. Published so far: `android-v1.0.0`, `android-v1.0.1`.
+
 Two product flavors:
 
 | Flavor | What it does | Needs |
