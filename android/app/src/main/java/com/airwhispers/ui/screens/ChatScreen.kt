@@ -35,8 +35,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.airwhispers.R
 import com.airwhispers.data.model.DeliveryState
 import com.airwhispers.data.model.Message
 import com.airwhispers.data.model.MessagePriority
@@ -60,6 +62,7 @@ fun ChatScreen(
     val conversations by viewModel.conversations.collectAsState()
     val allMessages by viewModel.messages.collectAsState()
     val queue by viewModel.queue.collectAsState()
+    val contacts by viewModel.contacts.collectAsState()
     val conversation = conversations.firstOrNull { it.id == conversationId }
     val messages = allMessages[conversationId].orEmpty()
 
@@ -79,24 +82,24 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(conversation?.peerDisplayName ?: "Conversation")
+                        Text(conversation?.peerDisplayName ?: stringResource(R.string.chat_conversation))
                         Text(
                             if (conversation?.peerTrusted == true) {
-                                "Trusted for Call Assist"
+                                stringResource(R.string.contacts_trusted)
                             } else {
-                                "Not spoken aloud on this device"
+                                stringResource(R.string.chat_not_spoken_here)
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
-                navigationIcon = { TextButton(onClick = onBack) { Text("← Back") } },
+                navigationIcon = { TextButton(onClick = onBack) { Text("← " + stringResource(R.string.action_back)) } },
                 actions = {
                     conversation?.let { c ->
                         TextButton(
                             onClick = {
-                                val contact = viewModel.contacts.value.firstOrNull { it.userId == c.peerId }
+                                val contact = contacts.firstOrNull { it.userId == c.peerId }
                                 if (contact != null) viewModel.setTrusted(contact, !c.peerTrusted)
                             },
                         ) {
@@ -126,7 +129,7 @@ fun ChatScreen(
                         OutlinedTextField(
                             value = draft,
                             onValueChange = { draft = it },
-                            placeholder = { Text("Message") },
+                            placeholder = { Text(stringResource(R.string.chat_input_hint)) },
                             maxLines = 5,
                             modifier = Modifier.weight(1f),
                         )
@@ -145,7 +148,7 @@ fun ChatScreen(
                                     draft = ""
                                 },
                                 enabled = draft.isNotBlank(),
-                            ) { Text("Send") }
+                            ) { Text(stringResource(R.string.chat_send)) }
                         }
                     }
                 }

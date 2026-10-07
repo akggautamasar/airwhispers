@@ -28,6 +28,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -58,6 +59,7 @@ fun OnboardingScreen(viewModel: AppViewModel) {
     var displayName by remember { mutableStateOf("") }
     var errorText by remember { mutableStateOf<String?>(null) }
     var statusText by remember { mutableStateOf<String?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     var busy by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
@@ -89,7 +91,7 @@ fun OnboardingScreen(viewModel: AppViewModel) {
             OutlinedTextField(
                 value = serverUrl,
                 onValueChange = { serverUrl = it },
-                label = { Text("AirWhispers server") },
+                label = { Text(stringResource(R.string.auth_backend_placeholder)) },
                 placeholder = { Text("https://chat.example.com") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
@@ -116,10 +118,10 @@ fun OnboardingScreen(viewModel: AppViewModel) {
                     viewModel.checkServer { reachable, message ->
                         busy = false
                         if (reachable) {
-                            statusText = "Server reachable"
+                            statusText = context.getString(R.string.onboarding_server_reachable)
                             step = Step.ACCOUNT
                         } else {
-                            errorText = message ?: "Could not reach that server."
+                            errorText = message ?: context.getString(R.string.error_server_unreachable)
                         }
                     }
                 },
@@ -129,10 +131,10 @@ fun OnboardingScreen(viewModel: AppViewModel) {
                 if (busy) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
-                    Text("Continue")
+                    Text(stringResource(R.string.auth_continue))
                 }
             }
-            TextButton(onClick = { step = Step.ACCOUNT }) { Text("Skip check and continue") }
+            TextButton(onClick = { step = Step.ACCOUNT }) { Text(stringResource(R.string.action_skip_check)) }
         } else {
             Row(
                 Modifier.fillMaxWidth(),
@@ -158,7 +160,7 @@ fun OnboardingScreen(viewModel: AppViewModel) {
                 OutlinedTextField(
                     value = displayName,
                     onValueChange = { displayName = it },
-                    label = { Text("Display name") },
+                    label = { Text(stringResource(R.string.auth_display_name)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -167,7 +169,7 @@ fun OnboardingScreen(viewModel: AppViewModel) {
             OutlinedTextField(
                 value = email,
                 onValueChange = { email = it },
-                label = { Text("Email") },
+                label = { Text(stringResource(R.string.auth_email)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
                 modifier = Modifier.fillMaxWidth(),
@@ -176,7 +178,7 @@ fun OnboardingScreen(viewModel: AppViewModel) {
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
-                label = { Text("Password") },
+                label = { Text(stringResource(R.string.auth_password)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
@@ -225,7 +227,7 @@ fun OnboardingScreen(viewModel: AppViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
-            TextButton(onClick = { step = Step.SERVER }) { Text("Change server") }
+            TextButton(onClick = { step = Step.SERVER }) { Text(stringResource(R.string.settings_change_server)) }
         }
     }
 }

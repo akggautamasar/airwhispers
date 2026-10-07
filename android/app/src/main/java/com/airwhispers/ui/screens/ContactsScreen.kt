@@ -30,7 +30,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.airwhispers.R
 import com.airwhispers.data.model.Contact
 import com.airwhispers.ui.AppViewModel
 import com.airwhispers.ui.components.Avatar
@@ -53,7 +55,7 @@ fun ContactsScreen(viewModel: AppViewModel, onOpenChat: (String) -> Unit) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("Search contacts") },
+                placeholder = { Text(stringResource(R.string.contacts_search_hint)) },
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -104,15 +106,15 @@ fun ContactsScreen(viewModel: AppViewModel, onOpenChat: (String) -> Unit) {
         var error by remember { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { showAdd = false },
-            title = { Text("Add contact") },
+            title = { Text(stringResource(R.string.contacts_add)) },
             text = {
                 Column {
-                    Text("They must already have an AirWhispers account.", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.contacts_hint_existing_account), style = MaterialTheme.typography.bodyMedium)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = email,
                         onValueChange = { email = it; error = null },
-                        label = { Text("Email") },
+                        label = { Text(stringResource(R.string.auth_email)) },
                         singleLine = true,
                         isError = error != null,
                         modifier = Modifier.fillMaxWidth(),
@@ -131,9 +133,9 @@ fun ContactsScreen(viewModel: AppViewModel, onOpenChat: (String) -> Unit) {
                         }
                     },
                     enabled = email.contains("@"),
-                ) { Text("Add") }
+                ) { Text(stringResource(R.string.action_add)) }
             },
-            dismissButton = { TextButton(onClick = { showAdd = false }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { showAdd = false }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
 }

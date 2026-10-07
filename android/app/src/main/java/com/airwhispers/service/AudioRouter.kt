@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Build
 import com.airwhispers.core.AppLog
 import com.airwhispers.data.model.SpeechOutput
 
@@ -98,7 +99,17 @@ class AudioRouter(private val context: Context) {
      * own process (we never record).
      */
     fun microphoneInUseByOtherApp(): Boolean = runCatching {
-        audioManager.activeRecordingConfigurations.any { it.isClientSilenced.not() }
+        val configurations = audioManager.activeRecordingConfigurations
+        if (configurations.isEmpty()) {
+            false
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // A silenced client is not sending audio anywhere, so it is not a call.
+            configurations.any { !it.isClientSilenced }
+        } else {
+            // AudioRecordingConfiguration.isClientSilenced only exists from API 29.
+            // Below that, presence in this list already means "someone is recording".
+            true
+        }
     }.getOrDefault(false)
 
     private companion object {

@@ -37,9 +37,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.airwhispers.R
 import com.airwhispers.data.model.Conversation
 import com.airwhispers.ui.AppViewModel
 import com.airwhispers.ui.components.Avatar
@@ -92,7 +94,7 @@ fun HomeScaffold(
                 },
                 actions = {
                     if (callAssist.enabled && (queue.current != null || queue.pending.isNotEmpty())) {
-                        TextButton(onClick = { viewModel.stopSpeech() }) { Text("Stop") }
+                        TextButton(onClick = { viewModel.stopSpeech() }) { Text(stringResource(R.string.call_assist_stop_speech)) }
                     }
                 },
             )
@@ -136,7 +138,7 @@ private fun ChatList(
     Box(Modifier.fillMaxSize()) {
         if (conversations.isEmpty()) {
             EmptyState(
-                title = "No conversations yet",
+                title = stringResource(R.string.chats_empty_title),
                 body = "Add someone by their email address and start talking — anything they send can be spoken to you during a call.",
             )
         } else {
@@ -239,7 +241,7 @@ private fun NewChatDialog(
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New conversation") },
+        title = { Text(stringResource(R.string.chat_new)) },
         text = {
             Column {
                 Text(
@@ -250,7 +252,7 @@ private fun NewChatDialog(
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it; error = null },
-                    label = { Text("Email") },
+                    label = { Text(stringResource(R.string.auth_email)) },
                     singleLine = true,
                     isError = error != null,
                     modifier = Modifier.fillMaxWidth(),
@@ -265,9 +267,9 @@ private fun NewChatDialog(
             TextButton(
                 onClick = { onStart(email) { err -> error = err?.message ?: "Could not start the conversation." } },
                 enabled = email.contains("@"),
-            ) { Text("Start") }
+            ) { Text(stringResource(R.string.action_start)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
     )
 }
 

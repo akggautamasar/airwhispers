@@ -30,8 +30,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.airwhispers.R
 import com.airwhispers.BuildConfig
 import com.airwhispers.data.model.EmojiMode
 import com.airwhispers.data.model.SpeechOutput
@@ -40,6 +42,7 @@ import com.airwhispers.ui.components.InfoBanner
 import com.airwhispers.ui.components.SectionCard
 import com.airwhispers.ui.components.SettingRow
 import com.airwhispers.ui.components.SwitchRow
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
@@ -48,6 +51,9 @@ fun SettingsScreen(viewModel: AppViewModel) {
     val speech by viewModel.speech.collectAsState()
     val session by viewModel.session.collectAsState()
     val relay by viewModel.relayState.collectAsState()
+    // Collected, not read as `.value`: a StateFlow read inside composition would not
+    // recompose when the server address changes.
+    val backendUrl by viewModel.backendUrl.collectAsState()
 
     var choice by remember { mutableStateOf<Choice?>(null) }
     val phonePermissionLauncher = rememberLauncherForActivityResult(
@@ -61,23 +67,23 @@ fun SettingsScreen(viewModel: AppViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionCard(title = "Account") {
+        SectionCard(title = stringResource(R.string.settings_account)) {
             SettingRow(
                 title = session.account?.displayName?.ifBlank { "Signed in" } ?: "Signed in",
-                subtitle = session.account?.email?.ifBlank { viewModel.backendUrl.value },
+                subtitle = session.account?.email?.ifBlank { backendUrl },
             )
             SettingRow(
-                title = "Server",
-                subtitle = viewModel.backendUrl.value.ifBlank { "Not configured" },
+                title = stringResource(R.string.settings_server),
+                subtitle = backendUrl.ifBlank { stringResource(R.string.settings_server_not_configured) },
             )
             Row(Modifier.padding(horizontal = 12.dp)) {
-                TextButton(onClick = { viewModel.signOut() }) { Text("Sign out") }
+                TextButton(onClick = { viewModel.signOut() }) { Text(stringResource(R.string.settings_sign_out)) }
             }
         }
 
-        SectionCard(title = "Speech") {
+        SectionCard(title = stringResource(R.string.settings_tts)) {
             SettingRow(
-                title = "Language",
+                title = stringResource(R.string.settings_tts_language),
                 subtitle = speech.languageTag,
                 trailing = { Text("›") },
                 onClick = {
@@ -88,21 +94,21 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 },
             )
             LabelledSlider(
-                title = "Speed",
+                title = stringResource(R.string.settings_tts_speed),
                 value = speech.speechRate,
                 range = 0.5f..2.0f,
-                display = String.format("%.2f×", speech.speechRate),
+                display = String.format(Locale.getDefault(), "%.2f×", speech.speechRate),
                 onChange = { value -> viewModel.updateSpeech { it.copy(speechRate = value) } },
             )
             LabelledSlider(
-                title = "Pitch",
+                title = stringResource(R.string.settings_tts_pitch),
                 value = speech.pitch,
                 range = 0.5f..2.0f,
-                display = String.format("%.2f", speech.pitch),
+                display = String.format(Locale.getDefault(), "%.2f", speech.pitch),
                 onChange = { value -> viewModel.updateSpeech { it.copy(pitch = value) } },
             )
             LabelledSlider(
-                title = "Pause between messages",
+                title = stringResource(R.string.settings_tts_pause_between),
                 value = speech.pauseBetweenMessagesMs / 1000f,
                 range = 0f..4f,
                 display = "${(speech.pauseBetweenMessagesMs / 100f).roundToInt() / 10f}s",
@@ -111,20 +117,20 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 },
             )
             SettingRow(
-                title = "Emoji speech",
+                title = stringResource(R.string.settings_tts_emoji),
                 subtitle = AppViewModel.EMOJI_LABEL[speech.emojiMode] ?: speech.emojiMode.name,
                 trailing = { Text("›") },
                 onClick = { choice = Choice.Emoji(speech.emojiMode) },
             )
             SettingRow(
-                title = "Output",
+                title = stringResource(R.string.settings_tts_output),
                 subtitle = AppViewModel.OUTPUT_LABEL[speech.output] ?: speech.output.name,
                 trailing = { Text("›") },
                 onClick = { choice = Choice.Output(speech.output) },
             )
             SettingRow(
-                title = "Whisper mode",
-                subtitle = "Softer voice for earphones (experimental).",
+                title = stringResource(R.string.call_assist_whisper_mode),
+                subtitle = stringResource(R.string.call_assist_whisper_mode_summary),
                 trailing = {
                     androidx.compose.material3.Switch(
                         checked = speech.whisperMode,
@@ -133,14 +139,14 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 },
             )
             Row(Modifier.padding(horizontal = 12.dp)) {
-                Button(onClick = { viewModel.testSpeak() }) { Text("Test voice") }
+                Button(onClick = { viewModel.testSpeak() }) { Text(stringResource(R.string.settings_tts_test)) }
             }
         }
 
-        SectionCard(title = "Notifications & reliability") {
+        SectionCard(title = stringResource(R.string.settings_notifications_reliability)) {
             SettingRow(
-                title = "Notification settings",
-                subtitle = "Choose how AirWhispers may alert you.",
+                title = stringResource(R.string.settings_notification_settings),
+                subtitle = stringResource(R.string.settings_notification_settings_summary),
                 trailing = { Text("›") },
                 onClick = {
                     val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
@@ -149,15 +155,15 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 },
             )
             SettingRow(
-                title = "Allow call detection (optional)",
-                subtitle = "Lets Call Assist start with phone calls. No call content is accessed.",
+                title = stringResource(R.string.settings_allow_detection),
+                subtitle = stringResource(R.string.settings_allow_detection_summary),
                 trailing = { Text("›") },
                 onClick = { phonePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE) },
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 SettingRow(
-                    title = "Ignore battery optimisation",
-                    subtitle = "Recommended so spoken messages keep working with the screen off.",
+                    title = stringResource(R.string.settings_battery_ignore),
+                    subtitle = stringResource(R.string.settings_battery_ignore_summary),
                     trailing = { Text("›") },
                     onClick = {
                         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
@@ -167,12 +173,12 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 )
             }
             SettingRow(
-                title = "Realtime connection",
+                title = stringResource(R.string.settings_realtime),
                 subtitle = relay.name.lowercase().replace('_', ' '),
             )
         }
 
-        SectionCard(title = "Privacy") {
+        SectionCard(title = stringResource(R.string.settings_privacy)) {
             InfoBanner(
                 "AirWhispers only handles its own messages, its own contacts and its own speech. " +
                     "It never records calls, never opens the microphone, never reads WhatsApp/Telegram/Signal " +
@@ -180,23 +186,23 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
             SettingRow(
-                title = "Device id",
+                title = stringResource(R.string.settings_device_id),
                 subtitle = viewModel.deviceId,
             )
             SettingRow(
-                title = "This device speaks with",
-                subtitle = "Your phone's own text-to-speech engine — nothing is sent to a cloud service.",
+                title = stringResource(R.string.settings_engine_title),
+                subtitle = stringResource(R.string.settings_engine_summary),
             )
         }
 
-        SectionCard(title = "About") {
+        SectionCard(title = stringResource(R.string.settings_about)) {
             SettingRow(
-                title = "AirWhispers ${BuildConfig.VERSION_NAME}",
-                subtitle = "Build ${BuildConfig.VERSION_CODE} · ${BuildConfig.FLAVOR}",
+                title = stringResource(R.string.settings_about_version, BuildConfig.VERSION_NAME),
+                subtitle = stringResource(R.string.settings_about_build, BuildConfig.VERSION_CODE, BuildConfig.FLAVOR),
             )
             SettingRow(
-                title = "Call Assist behaviour is documented",
-                subtitle = "See docs/android-limitations.md in the repository.",
+                title = stringResource(R.string.settings_docs_title),
+                subtitle = stringResource(R.string.settings_docs_summary),
             )
         }
     }
@@ -288,7 +294,7 @@ private fun ChoiceDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) } },
     )
 }
 
