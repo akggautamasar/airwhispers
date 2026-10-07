@@ -413,7 +413,7 @@ class LocalStore(
                 db.execSQL("DROP TABLE IF EXISTS $T_MESSAGES")
                 db.execSQL("DROP TABLE IF EXISTS $T_CONVERSATIONS")
                 db.execSQL("DROP TABLE IF EXISTS $T_PEERS")
-                db.execSQL("DROP TABLE IF EXISTS $T_CONTACTS")
+                db.execSQL("DROP TABLE IF EXISTS contacts")
                 db.execSQL("DROP TABLE IF EXISTS $T_META")
                 onCreate(db)
             }
