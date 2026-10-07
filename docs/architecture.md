@@ -145,7 +145,9 @@ the speech pipeline, backend or tests refers to the brand.
 Localisation:
 
 * `values/strings.xml` (English) and `values-hi/strings.xml` (Hindi) carry identical key sets —
-  139 strings each, checked by comparing the two files. Screens read them with
+  139 strings each, checked in CI (`.github/scripts/check-translations.py`), which also fails when a
+  translation loses or renames a format argument (`%1$s`), a mistake Android reports only on a
+  device set to that language. Screens read them with
   `stringResource(...)`; the only hard-coded text left in the UI is decoration (arrows,
   emoji glyphs) and URLs.
 * `res/xml/locales_config.xml` declares `en` and `hi` and is referenced from the manifest

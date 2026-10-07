@@ -135,8 +135,17 @@ where libraries can merge permissions in — against the absent list above.
 
 `WAKE_LOCK` used to be declared and was removed: no code path ever acquired a wake lock
 (audio playback holds its own) and an unused permission is a promise the app does not keep.
-The same check reports, as a build annotation, any permission that reaches the APK from a
-library rather than from this app.
+
+The APK also carries one permission this app never declares, merged in from AndroidX:
+
+Libraries additionally declare: `com.airwhispers.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
+
+It is a signature-level permission AndroidX Core declares against the app itself, to gate its
+own non-exported dynamic receivers. It is scoped to `com.airwhispers`, is not a system
+capability, and grants nothing to any other app — it is disclosed here because it does appear
+in the shipped APK's manifest, and the CI check fails if the APK ever carries a merged
+permission this file does not name. That is the whole list: nine the app asks for, plus this
+one line AndroidX adds.
 
 `MODIFY_AUDIO_SETTINGS` deserves a note: it is the permission that would allow changing the
 *communication* device or the audio mode. Requesting it would look like capability the app is

@@ -40,6 +40,12 @@ jobs:
       - name: Check the permission manifest against docs/security.md
         run: python3 .github/scripts/check-permissions.py
 
+      # Android falls back to English silently, so a missing translation is
+      # invisible in review; a translated string that loses a %1$s is a crash on
+      # a Hindi device only.
+      - name: Check the translations
+        run: python3 .github/scripts/check-translations.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

@@ -49,8 +49,8 @@ def declared_permissions(manifest_path: str) -> set[str]:
     return {name[len(PERMISSION_PREFIX):] if name.startswith(PERMISSION_PREFIX) else name for name in names}
 
 
-def documented_permissions(doc_path: str) -> tuple[set[str], set[str]]:
-    """(documented-as-present, documented-as-absent) permission names."""
+def documented_permissions(doc_path: str) -> tuple[set[str], set[str], set[str]]:
+    """(documented-as-present, documented-as-absent, documented-as-library-merged)."""
     with open(doc_path, encoding="utf-8") as handle:
         text = handle.read()
 
@@ -79,7 +79,15 @@ def documented_permissions(doc_path: str) -> tuple[set[str], set[str]]:
         raise SystemExit("::error::docs/security.md no longer lists deliberately absent permissions")
     absent.update(re.findall(r"`([A-Z][A-Z0-9_]{2,})`", absent_match.group(1)))
 
-    return present, absent
+    # Permissions a dependency merges in cannot be removed, only disclosed, so the
+    # docs name them and this check fails on anything undisclosed. The marker is
+    # deliberate: prose that the check cannot find is prose the check cannot hold.
+    merged: set[str] = set()
+    merged_match = re.search(r"Libraries additionally declare:(.*?)(?:\n\n|\Z)", section, re.S)
+    if merged_match:
+        merged.update(re.findall(r"`([A-Za-z][A-Za-z0-9_.]+)`", merged_match.group(1)))
+
+    return present, absent, merged
 
 
 def find_aapt2() -> str | None:
@@ -122,7 +130,7 @@ def main() -> int:
     args = parser.parse_args()
 
     declared = declared_permissions(args.manifest)
-    documented, absent = documented_permissions(args.doc)
+    documented, absent, library_merged = documented_permissions(args.doc)
 
     problems: list[str] = []
     undeclared_in_docs = declared - documented
@@ -161,6 +169,18 @@ def main() -> int:
                 problems.append(
                     "a deliberately absent permission reached the shipped APK: "
                     + ", ".join(sorted(leaked_shipped))
+                )
+            undisclosed = merged_only - library_merged
+            if undisclosed:
+                problems.append(
+                    "the shipped APK carries permission(s) docs/security.md does not disclose: "
+                    + ", ".join(sorted(undisclosed))
+                )
+            stale = library_merged - merged_only
+            if stale:
+                problems.append(
+                    "docs/security.md discloses permission(s) the shipped APK does not carry: "
+                    + ", ".join(sorted(stale))
                 )
             if merged_only:
                 # An annotation, not just stdout: CI logs are not reachable from
