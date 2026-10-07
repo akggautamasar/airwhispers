@@ -14,7 +14,8 @@ messages between them in realtime (REST + WebSocket).
 
 ```bash
 npm ci
-npm run dev            # in-memory store + demo console on http://localhost:8080/
+npm run dev            # build, then serve: in-memory store + demo console on http://localhost:8080/
+npm run dev:watch      # optional, second terminal: rebuild on save (npm run dev picks it up on restart)
 npm test               # type-check + 20 API tests + build
 node scripts/smoke.mjs # live end-to-end check against a running server
 ```

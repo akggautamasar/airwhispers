@@ -26,7 +26,8 @@ npm ci
 npm run dev
 ```
 
-The console prints the address, for example:
+`npm run dev` compiles first and then serves, so it behaves exactly like production. The console
+prints the address, for example:
 
 ```
 {"level":"info","message":"server.listening","port":8080,"host":"0.0.0.0","version":"1.0.0","push":false}
