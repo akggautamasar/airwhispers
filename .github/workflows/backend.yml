@@ -6,9 +6,15 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend.yml"
+      # docs-contract.test.ts asserts that docs/api.md matches the routes and
+      # error codes the app actually implements, so a docs-only edit must run
+      # the backend tests — otherwise the guard has a hole exactly where the
+      # drift happens.
+      - "docs/api.md"
   pull_request:
     paths:
       - "backend/**"
+      - "docs/api.md"
   workflow_dispatch:
 
 permissions:
