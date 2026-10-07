@@ -33,6 +33,9 @@ ERROR_PATTERNS = (
     re.compile(r"^Caused by:"),
     re.compile(r"^\s+> "),                   # Gradle detail lines under "What went wrong"
     re.compile(r"AssertionError|ComparisonFailure"),
+    re.compile(r":\s*(Error|Warning):\s"),          # Android lint text output
+    re.compile(r"^Lint found \d+ error"),
+    re.compile(r"^\s*\d+ errors?, \d+ warnings?"),
 )
 
 for path in sorted(glob.glob(os.path.join(WORKSPACE, "build-logs", "*.log"))):
@@ -70,7 +73,7 @@ for xml_path in sorted(
 
 # ---------------------------------------------------------------- Android lint
 for xml_path in sorted(
-    glob.glob(os.path.join(WORKSPACE, "android/app/build/reports/lint-results-*.xml"))
+    glob.glob(os.path.join(WORKSPACE, "android/**/lint-results-*.xml"), recursive=True)
 ):
     try:
         root = ET.parse(xml_path).getroot()
