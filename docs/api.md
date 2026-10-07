@@ -217,6 +217,14 @@ period; the server replies `pong` to `ping` (the client uses this as a heartbeat
 events are **not** replayed on reconnect — the client re-fetches history, and idempotent
 message upserts plus the spoken ledger make that safe.
 
+## This document is tested
+
+Everything below is checked against the running app, not just written down:
+`backend/tests/docs-contract.test.ts` compares this file's route list with
+Fastify's own route tree and provokes each row of the error table below against
+a real server. The backend workflow re-runs it whenever this file changes, so a
+route or a status code that drifts here fails CI. See `docs/testing.md`.
+
 ## Errors
 
 Every failure uses one envelope:
