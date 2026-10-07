@@ -333,20 +333,23 @@ object TextNormalizer {
     private const val ZWJ = 0x200D
     private val SKIN_TONES = 0x1F3FB..0x1F3FF
 
-    private const val ZERO_WIDTH = "[\\u200B\\u200C\\uFEFF\\u180E]"
-    private const val BIDI_CONTROLS = "[\\u202A-\\u202E\\u2066-\\u2069]"
-    private const val URL =
-        "(https?://\\S+|www\\.\\S+|[\\w.+-]+@[\\w-]+\\.[\\w.]+)"
-    private const val CODE_BLOCK = "```[\\s\\S]*?```"
-    private const val INLINE_CODE = "`([^`]*)`"
-    private const val MARKDOWN_EMPHASIS = "[*_~]{1,3}([^*_~]+)[*_~]{1,3}"
-    private const val BLOCKQUOTE = "(?m)^\\s*>+\\s*"
-    private const val HEADING = "(?m)^\\s*#{1,6}\\s*([^\\n]*)"
-    private const val LEADING_BULLET = "(?m)^\\s*[-•*]\\s+([^\\n]*)"
-    private const val TEXT_EMOTICON_HAPPY = "[:;]-?[){DDPp]+"
-    private const val TEXT_EMOTICON_SAD = "[:;]-?[(/|]+"
-    private const val REPEATED_PUNCTUATION = "([!?.,])\\1{1,}"
-    private const val REPEATED_SPACES = "\\s{2,}"
-    private const val SPACE_BEFORE_PUNCTUATION = "\\s+([,.!?;:])"
-    private const val EMPTY_PAIRS = "\\.\\s*\\.|,\\s*,|!\\s*!"
+    // These must be Regex objects: String.replace(String, String) is a *literal*
+    // replacement, which silently does nothing for a pattern like "[*_~]{1,3}".
+    private val ZERO_WIDTH = Regex("[\\u200B\\u200C\\uFEFF\\u180E]")
+    private val BIDI_CONTROLS = Regex("[\\u202A-\\u202E\\u2066-\\u2069]")
+    private val URL = Regex(
+        "(https?://\\S+|www\\.\\S+|[\\w.+-]+@[\\w-]+\\.[\\w.]+)",
+    )
+    private val CODE_BLOCK = Regex("```[\\s\\S]*?```")
+    private val INLINE_CODE = Regex("`([^`]*)`")
+    private val MARKDOWN_EMPHASIS = Regex("[*_~]{1,3}([^*_~]+)[*_~]{1,3}")
+    private val BLOCKQUOTE = Regex("(?m)^\\s*>+\\s*")
+    private val HEADING = Regex("(?m)^\\s*#{1,6}\\s*([^\\n]*)")
+    private val LEADING_BULLET = Regex("(?m)^\\s*[-•*]\\s+([^\\n]*)")
+    private val TEXT_EMOTICON_HAPPY = Regex("[:;]-?[){DDPp]+")
+    private val TEXT_EMOTICON_SAD = Regex("[:;]-?[(/|]+")
+    private val REPEATED_PUNCTUATION = Regex("([!?.,])\\1{1,}")
+    private val REPEATED_SPACES = Regex("\\s{2,}")
+    private val SPACE_BEFORE_PUNCTUATION = Regex("\\s+([,.!?;:])")
+    private val EMPTY_PAIRS = Regex("\\.\\s*\\.|,\\s*,|!\\s*!")
 }

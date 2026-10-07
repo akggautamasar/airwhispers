@@ -30,8 +30,8 @@ class TextNormalizerTest {
 
     @Test
     fun `call emoji is not repeated after the word call`() {
-        val spoken = speak("Call me urgently 📞")
-        assertFalse("should not say 'call' twice: $spoken", spoken.lowercase().contains("call call"))
+        // The 📞 must vanish entirely: the surrounding words already say it.
+        assertEquals("Call me urgently.", speak("Call me urgently 📞"))
     }
 
     @Test
@@ -41,9 +41,7 @@ class TextNormalizerTest {
 
     @Test
     fun `read all mode describes known emoji`() {
-        val spoken = speak("ok 👍🎉", EmojiMode.READ_ALL)
-        assertTrue(spoken.contains("thumbs up"))
-        assertTrue(spoken.contains("celebration"))
+        assertEquals("Ok thumbs up celebration.", speak("ok 👍🎉", EmojiMode.READ_ALL))
     }
 
     @Test
@@ -62,7 +60,7 @@ class TextNormalizerTest {
     fun `markdown and quoting are removed`() {
         assertEquals("Important meeting today.", speak("**Important** meeting today"))
         assertEquals("Hello world.", speak("`hello` world"))
-        assertFalse(speak("> quoted line").contains(">"))
+        assertEquals("Quoted line.", speak("> quoted line"))
     }
 
     @Test
