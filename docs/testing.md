@@ -44,7 +44,7 @@ code production runs — only the storage differs.
 `docs-contract.test.ts` exists because the authorization-boundary tests found real drift:
 the error codes had been documented uppercase (`NOT_A_MEMBER`) while the app answers
 lowercase `forbidden`, validation failures were documented as `422` while the app answers
-`400`, `POST /conversations` was documented with an `participantEmail` body while the route
+`400`, `POST /conversations` was documented with a `participantEmail` body while the route
 takes `peerUserId`, and the read receipt was documented as `200` with a body while the
 client — and the implementation — use `204`. The docs are now the thing under test, so
 they cannot drift again silently.
@@ -151,7 +151,7 @@ above; what a device must confirm is exactly the table in this and the previous 
 
 ## Regression checklist for contributors
 
-1. `cd backend && npm test` — schema-reference check + type-check + docs contract + 16 API tests
+1. `cd backend && npm test` — schema-reference check + type-check + docs contract + 17 API tests
    (+ the store contract when `TEST_DATABASE_URL` is set).
 2. `cd backend && node scripts/smoke.mjs <url>` against a running server.
 3. `cd android && ./gradlew testStandaloneDebugUnitTest` — 32 unit tests (14 normaliser, 10 assist, 8 queue).
