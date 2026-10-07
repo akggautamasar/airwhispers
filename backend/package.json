@@ -11,9 +11,11 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "dev": "node --watch --experimental-strip-types src/server.ts",
-    "test": "npm run build && node --test \"dist/tests/*.test.js\"",
+    "test": "npm run check:schema && npm run build && node --test \"dist/tests/*.test.js\"",
     "schema": "node --experimental-strip-types scripts/apply-schema.ts",
-    "test:only": "node --test \"dist/tests/*.test.js\""
+    "test:only": "node --test \"dist/tests/*.test.js\"",
+    "check:schema": "node --experimental-strip-types scripts/check-schema-refs.ts",
+    "test:pg": "node --test \"dist/tests/store.pg.test.js\""
   },
   "dependencies": {
     "fastify": "^5.0.0",

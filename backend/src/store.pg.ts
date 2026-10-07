@@ -185,7 +185,15 @@ export class PgStore implements Store {
         message.spokenAt,
       ],
     );
-    if (rows[0]) return { message: toMessage(rows[0]), created: true };
+    if (rows[0]) {
+      // PostgreSQL returns nothing when ON CONFLICT swallows the insert, but not
+      // every driver/proxy does (the pg-mem emulator used in tests returns the
+      // existing row). `created` decides whether a push and a socket event are
+      // fanned out, so confirm the row really is ours by primary key instead of
+      // trusting the RETURNING clause.
+      const mine = await this.q<{ id: string }>(`SELECT id FROM messages WHERE id = $1`, [message.id]);
+      if (mine.length > 0) return { message: toMessage(rows[0]), created: true };
+    }
     const existing = await this.q<MessageRow>(
       `SELECT * FROM messages WHERE sender_id = $1 AND client_message_id = $2`,
       [message.senderId, message.clientMessageId],

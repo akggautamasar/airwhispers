@@ -9,6 +9,8 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
 | --- | --- | --- | --- |
 | Android unit tests | `android/app/src/test/java/com/airwhispers/` | `cd android && ./gradlew testStandaloneDebugUnitTest` | Text normalisation, queue semantics, assist decision gates |
 | Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Auth, authorization, messaging, idempotency, receipts, contacts, settings, rate limiting |
+| Schema reference check | `backend/scripts/check-schema-refs.ts` | part of `npm test` | Every table/column the PostgreSQL store names must exist in `sql/schema.sql`, and every `ON CONFLICT` target must have a unique or primary key |
+| **PostgreSQL store contract** | `backend/tests/store-contract.ts` | `cd backend && TEST_DATABASE_URL=postgres://… npm test` (CI: `postgres` job with a `postgres:16` service) | The production store end to end: accounts, token rotation, conversations, message idempotency, receipts, settings, devices |
 | Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, receipt, logout |
 | Android lint | `android/app/build.gradle.kts` (`lint { abortOnError = true }`) | as part of CI | API-level misuse (`NewApi`), permission mistakes (`MissingPermission`), Compose correctness (`StateFlowValueCalledInComposition`) — the only automated check that can catch device-behaviour bugs without a phone |
 | APK verification | `.github/workflows/android.yml` (“Verify the release APK”) | as part of CI | Zip integrity, SHA-256 self-check, `aapt2 dump badging` (package id, version name, not debuggable), `apksigner verify --print-certs`, and a byte-level check that the Hindi resources actually shipped inside `resources.arsc` |
@@ -37,6 +39,16 @@ milliseconds on any machine (and on the CI runner, which has no emulator).
 
 They build the real Fastify app over the in-memory store, so the code under test is the same
 code production runs — only the storage differs.
+
+**The PostgreSQL store is verified separately, and only against real PostgreSQL.** The
+in-memory store is exercised by the API tests; `store.pg.ts` and `sql/schema.sql` are
+executed together only by the store contract, which needs `TEST_DATABASE_URL` and skips
+loudly without it. An in-process emulator (pg-mem) was tried first and rejected: it
+accepted the SQL and returned wrong results (`ON CONFLICT … DO NOTHING RETURNING *`
+returned the existing row; `= ANY($1::uuid[])` matched in one state and not in another).
+Its intended value — catching schema drift — is now covered statically by
+`check-schema-refs.ts`, which runs on every `npm test` and was verified to fail when a
+column or table is renamed by hand.
 
 Asserted invariants include: duplicate registration → `409`; wrong password → `401` (same
 answer as an unknown email); refresh rotation invalidating the old token; a stranger cannot
@@ -123,7 +135,8 @@ above; what a device must confirm is exactly the table in this and the previous 
 
 ## Regression checklist for contributors
 
-1. `cd backend && npm test` — type-check + 12 API tests.
+1. `cd backend && npm test` — schema-reference check + type-check + 12 API tests
+   (+ the store contract when `TEST_DATABASE_URL` is set).
 2. `cd backend && node scripts/smoke.mjs <url>` against a running server.
 3. `cd android && ./gradlew testStandaloneDebugUnitTest` — 32 unit tests (14 normaliser, 10 assist, 8 queue).
 4. `cd android && ./gradlew lintStandaloneRelease` — no lint errors (a clean build proves the

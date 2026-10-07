@@ -12,10 +12,27 @@ npm run dev            # in-memory store, no database needed, listens on :8080
 ```
 
 ```bash
-npm test               # type-check, API tests (node:test), build
+npm test               # schema check + type-check + API tests (node:test) + build
 npm run build          # -> dist/
 npm start              # runs dist/src/server.js
 ```
+
+### Verify the PostgreSQL store (recommended before deploying)
+
+The API tests run against the in-memory store. The production store is verified by a
+separate contract test that needs a real database:
+
+```bash
+docker compose up -d postgres                 # or any PostgreSQL 14+
+export TEST_DATABASE_URL=postgres://airwhispers:airwhispers@localhost:5432/airwhispers
+npm run schema                                # creates the tables if missing
+npm test                                      # runs the store contract too
+```
+
+Without `TEST_DATABASE_URL` that suite skips and says so; CI runs it in the `postgres`
+job against a `postgres:16` service container. `npm run check:schema` additionally proves
+that every table and column named in `src/store.pg.ts` exists in `sql/schema.sql`, and
+runs on every `npm test` with no database at all.
 
 Against a running server:
 
