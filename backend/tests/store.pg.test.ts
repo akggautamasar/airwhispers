@@ -21,14 +21,29 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { PgStore } from "../src/store.pg.js";
 
 const url = process.env.TEST_DATABASE_URL;
 
+/**
+ * Locates `sql/schema.sql` by walking up from this module: `tsc` does not copy
+ * `sql/` into `dist/`, so a path relative to the compiled file would be wrong
+ * (which is exactly how this test first failed in CI).
+ */
 function schemaSql(): string {
-  return readFileSync(new URL("../sql/schema.sql", import.meta.url), "utf8")
-    .replace(/CREATE EXTENSION[^;]*;/gi, "");
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let depth = 0; depth < 5; depth += 1) {
+    const candidate = join(dir, "sql", "schema.sql");
+    try {
+      return readFileSync(candidate, "utf8").replace(/CREATE EXTENSION[^;]*;/gi, "");
+    } catch {
+      dir = resolve(dir, "..");
+    }
+  }
+  throw new Error("sql/schema.sql not found near the test directory");
 }
 
 describe("PostgreSQL store", () => {
