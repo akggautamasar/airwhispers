@@ -56,15 +56,17 @@ jobs:
           gradle --no-daemon --stacktrace testStandaloneDebugUnitTest \
             2>&1 | tee "$GITHUB_WORKSPACE/build-logs/unit-tests.log"
 
-      # Renders the failure inside the check-run annotation, which stays readable even
-      # when the raw log or the uploaded artifacts are not reachable.
-      - name: Explain the failure
-        if: failure()
+      - name: Android lint (device-behaviour checks)
+        working-directory: android
+        env:
+          VERSION_NAME: ${{ inputs.version_name }}
         run: |
-          python3 .github/scripts/failure-summary.py
-          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
-            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
-          fi
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          gradle --no-daemon --stacktrace lintStandaloneRelease \
+            -Pairwhispers.versionName="${VERSION_NAME:-1.0.0}" \
+            -Pairwhispers.versionCode="${{ github.run_number }}" \
+            2>&1 | tee "$GITHUB_WORKSPACE/build-logs/lint.log"
 
       - name: Assemble release APK (standalone flavour)
         working-directory: android
@@ -95,6 +97,16 @@ jobs:
         continue-on-error: true
         run: gradle --no-daemon --stacktrace assembleFcmRelease -Pairwhispers.versionCode="${{ github.run_number }}"
 
+      # Renders the failure inside the check-run annotation, which stays readable even
+      # when the raw log or the uploaded artifacts are not reachable.
+      - name: Explain the failure
+        if: failure()
+        run: |
+          python3 .github/scripts/failure-summary.py
+          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
+            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
+          fi
+
       - name: Collect APKs and checksums
         run: |
           set -euo pipefail
@@ -117,6 +129,7 @@ jobs:
             build-logs/**
             android/app/build/reports/tests/**
             android/app/build/test-results/**
+            android/app/build/reports/lint-results-*.html
           if-no-files-found: ignore
           retention-days: 7
 

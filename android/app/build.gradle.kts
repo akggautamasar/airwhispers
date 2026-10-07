@@ -120,6 +120,17 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+
+    lint {
+        // Lint is the only check that can catch device-behaviour mistakes (calling a
+        // newer API without a version guard, missing permissions, foreground-service
+        // type misuse) without a physical phone, so its errors block the build.
+        abortOnError = true
+        warningsAsErrors = false
+        checkDependencies = false
+        xmlReport = true
+        htmlReport = true
+    }
 }
 
 kotlin {

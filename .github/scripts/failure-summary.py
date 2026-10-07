@@ -68,6 +68,25 @@ for xml_path in sorted(
             body = (bad.text or "").strip().splitlines()
             out.extend("    " + line.strip()[:300] for line in body[:15])
 
+# ---------------------------------------------------------------- Android lint
+for xml_path in sorted(
+    glob.glob(os.path.join(WORKSPACE, "android/app/build/reports/lint-results-*.xml"))
+):
+    try:
+        root = ET.parse(xml_path).getroot()
+    except ET.ParseError:
+        continue
+    for issue in root.iter("issue"):
+        severity = issue.get("severity") or ""
+        if severity.lower() not in ("error", "fatal"):
+            continue
+        location = issue.find("location")
+        where = ""
+        if location is not None:
+            where = f"{location.get('file')}:{location.get('line')} "
+        message = (issue.get("message") or "").strip()
+        out.append(f"LINT {severity} [{issue.get('id')}] {where}{message}"[:400])
+
 summary = "\n".join(out).strip() or "no build logs or test reports were found"
 print(summary[:8000])
 

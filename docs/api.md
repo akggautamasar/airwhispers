@@ -22,13 +22,13 @@ Two token kinds:
 
 | Response | Body |
 | --- | --- |
-| `201` | `{ "user": {...}, "accessToken": "...", "refreshToken": "...", "expiresIn": 900 }` |
+| `201` | `{ "user": {...}, "tokens": { "accessToken": "...", "refreshToken": "...", "expiresIn": 900, "tokenType": "Bearer" } }` |
 | `409` | `{"error":{"code":"EMAIL_TAKEN","message":"..."}}` |
 | `422` | validation error (bad email, password shorter than 8 characters) |
 
 ### `POST /api/v1/auth/login`
 
-Same request shape (email + password). `200` with the same token payload.
+Same request shape (email + password). `200` with the same `{ user, tokens }` payload.
 `401 INVALID_CREDENTIALS` on a bad pair — identical response whether the email exists or not.
 Rate limited to 20 requests/minute per IP (register: 10).
 
@@ -38,7 +38,8 @@ Rate limited to 20 requests/minute per IP (register: 10).
 { "refreshToken": "..." }
 ```
 
-`200` with a **new** access token *and* a new refresh token; the old one is invalidated.
+`200` with a **new** access token *and* a new refresh token (the token object itself, not a
+`user`); the old refresh token is invalidated.
 `401 INVALID_REFRESH_TOKEN` when it is unknown, expired, or already rotated.
 
 ### `POST /api/v1/auth/logout`
@@ -50,6 +51,10 @@ for that device. `204`, no body. Idempotent.
 
 `200 { "user": { id, email, displayName, createdAt } }`. Use it on app start to validate a
 restored session.
+
+### `PATCH /api/v1/users/me`
+
+`{ "displayName": "Asha" }` → `200 { "user": {...} }`. Only the display name is editable.
 
 ## Conversations
 
@@ -166,6 +171,11 @@ clamped to `0.5–2.0` / `0.5–2.0`. The response always contains the full sett
 
 Registers or updates this device. Send `"pushToken": null` to unregister. The backend prunes
 tokens that FCM rejects, so a stale token cannot keep a device "reachable" forever.
+
+### `DELETE /api/v1/devices/:deviceId`
+
+`204`, no body. Used on sign-out so a shared phone stops receiving pushes for the previous
+account. Idempotent.
 
 ## Health
 
