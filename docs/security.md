@@ -134,17 +134,39 @@ than not implementing it, so v1 documents the path instead of shipping a hand-ro
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `FOREGROUND_SERVICE_SPECIAL_USE` | Keep the armed session and speak while another app is on screen | Nothing about the other app's audio |
 | `POST_NOTIFICATIONS` | Show the Call Assist status and message notifications (Android 13+) | — |
 | `READ_PHONE_STATE` *(optional, requested only if you enable automatic telephony detection)* | Detect that a **cellular** call is active | No call content, no numbers, no call log access; it is not needed for VoIP detection, which uses the public audio APIs |
-| `BLUETOOTH_CONNECT` | Read the *name* of the connected output device for the UI | Cannot connect, disconnect or reroute anything; removed from the manifest in the current build (see android-limitations.md) |
 | `RECEIVE_BOOT_COMPLETED` | Show a "Call Assist is off" notification after a reboot rather than silently starting anything | — |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` *(declared for the user-initiated prompt)* | Let the user stop Samsung/Huawei-style battery managers from killing the session mid-call | — |
 
 Deliberately **absent**: `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `READ_CALL_LOG`, `READ_CONTACTS`,
-`READ_SMS`, `SYSTEM_ALERT_WINDOW`, `QUERY_ALL_PACKAGES`, and any accessibility service.
+`READ_SMS`, `SYSTEM_ALERT_WINDOW`, `QUERY_ALL_PACKAGES`, `BLUETOOTH_CONNECT`, `WAKE_LOCK`, and any
+accessibility service.
 
-`MODIFY_AUDIO_SETTINGS` deserves a note: it is the permission that would allow changing the
-*communication* device or the audio mode. Requesting it would look like capability the app is
-proud *not* to need, because changing the communication route is exactly what can break the
-call the user is on.
+The table above is not maintained by hand. `.github/scripts/check-permissions.py` compares it with
+the manifest on every CI run, fails when either side drifts, and then inspects the *shipped* APK —
+the merged manifest, where a dependency can add a permission this app never declared. Two
+permissions were removed after that check was added:
+
+* `MODIFY_AUDIO_SETTINGS` was declared but nothing called `AudioManager.setMode`,
+  `setCommunicationDevice` or `setSpeakerphoneOn` — the audio router only requests transient focus,
+  which needs no permission. It was also listed as *deliberately absent* while being present, which
+  is exactly the kind of contradiction a user cannot be expected to audit. Requesting it would look
+  like capability the app is proud *not* to need: changing the communication route is precisely what
+  can break the call the user is on.
+* `WAKE_LOCK` was declared and no code path ever acquired one (the media player holds its own), so it
+  was an unused promise.
+
+`BIND_QUICK_SETTINGS_TILE` is not on the list because it is not requested: it appears in the
+manifest as the `android:permission` attribute of the Call Assist quick-settings tile service, which
+is the permission Android checks before letting *another* app bind that service. It grants this app
+nothing.
+
+Libraries additionally declare: `com.airwhispers.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
+
+That one line is the whole of it. It comes from AndroidX Core, which declares a signature-level
+permission against the app itself to gate its own non-exported dynamic receivers; it is scoped to
+`com.airwhispers`, is not a system capability, and grants nothing to another app. It is named here
+because it does appear in the shipped APK's manifest — and the CI check fails if the APK ever carries
+a merged permission this file does not name, or names one the APK no longer carries.
 
 ## Data retention
 

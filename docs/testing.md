@@ -9,8 +9,11 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
 | --- | --- | --- | --- |
 | Android unit tests | `android/app/src/test/java/com/airwhispers/` | `cd android && ./gradlew testStandaloneDebugUnitTest` | Text normalisation, queue semantics, assist decision gates |
 | Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Device identity and codes, consent, messaging, idempotency, receipts, rate limiting |
+| Schema reference check | `backend/scripts/check-schema-refs.ts` | part of `npm test` | Every table and column the PostgreSQL store names must exist in `sql/schema.sql`, and every `ON CONFLICT` target must have a unique or primary key — the SQL is never executed by these tests, so this is what catches a schema that drifted away from the code |
+| **Permission manifest** | `.github/scripts/check-permissions.py` (CI, before the build) | The manifest and the table in `docs/security.md` must list the same permissions, no "deliberately absent" permission (microphone, call log, contacts, SMS, overlay, audio-mode, accessibility) may appear in the shipped APK, and permissions merged in from libraries are reported as an annotation |
+| **Translations** | `.github/scripts/check-translations.py` (CI, before the build) | Every locale has the same keys as `values/`, nothing is empty or duplicated, and each translated string keeps its English format arguments |
 | Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, consent, receipt |
-| CI | `.github/workflows/` | push / PR | Both of the above, plus the release APK build |
+| CI | `.github/workflows/` | push / PR | All of the above, plus the release APK build and the release APK's own verification (integrity, package id, not debuggable, signature, shipped permissions, Hindi resources present) |
 
 ### Android unit tests
 

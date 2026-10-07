@@ -173,6 +173,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     };
   };
 
+  /**
+   * Path parameters are client input like any other: a malformed id must fail
+   * validation (400) instead of reaching the database, where PostgreSQL answers
+   * `invalid input syntax for type uuid` and the API would return a 500.
+   */
+  const idParam = (params: unknown, key: string): string =>
+    asUuid((params as Record<string, unknown>)[key], key);
+
   /** Ensures the caller is a member of a conversation. */
   const requireConversation = async (conversationId: string, userId: string): Promise<Conversation> => {
     const conversation = await store.findConversation(conversationId);
@@ -391,11 +399,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   app.get(`${API}/conversations/:id/messages`, async (request) => {
     const { userId } = await authenticate(request);
-    const params = request.params as { id: string };
+    const conversationId = idParam(request.params, "id");
     const query = request.query as { limit?: string };
     const limit = Math.min(Math.max(Number(query.limit ?? 100) || 100, 1), 200);
-    await requireConversation(params.id, userId);
-    const messages = await store.listMessages(params.id, limit);
+    await requireConversation(conversationId, userId);
+    const messages = await store.listMessages(conversationId, limit);
 
     // Seeing the history implies delivery; read receipts stay explicit.
     await Promise.all(
@@ -411,9 +419,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.post(`${API}/conversations/:id/messages`, async (request, reply) => {
     const { userId } = await authenticate(request);
     limiter.check(`send:${userId}`, 120, 60_000);
-    const params = request.params as { id: string };
+    const conversation = await requireConversation(idParam(request.params, "id"), userId);
     const body = asObject(request.body);
-    const conversation = await requireConversation(params.id, userId);
 
     const clientMessageId = asString(body.clientMessageId, "clientMessageId", { min: 4, max: 120 });
     const text = asMessageText(body.text);
@@ -479,12 +486,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.patch(`${API}/conversations/:id/trust`, async (request) => {
     const { userId } = await authenticate(request);
     limiter.check(`trust:${userId}`, 60, 60_000);
-    const params = request.params as { id: string };
+    const conversationId = idParam(request.params, "id");
     const body = asObject(request.body);
     const trusted = asOptionalBoolean(body.trusted, "trusted");
     if (trusted === undefined) throw new ValidationError("trusted must be true or false");
 
-    const conversation = await requireConversation(params.id, userId);
+    const conversation = await requireConversation(conversationId, userId);
     const peerId = conversation.memberIds.find((id) => id !== userId);
     if (!peerId) throw new ValidationError("Conversation has no peer");
 
@@ -499,8 +506,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   app.post(`${API}/messages/:id/read`, async (request, reply) => {
     const { userId } = await authenticate(request);
-    const params = request.params as { id: string };
-    const message = await store.findMessage(params.id);
+    const message = await store.findMessage(idParam(request.params, "id"));
     if (!message) throw new NotFoundError("Message not found");
     if (message.recipientId !== userId) throw new ForbiddenError("Only the recipient can mark a message read");
 
@@ -521,8 +527,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
    */
   app.post(`${API}/messages/:id/spoken`, async (request, reply) => {
     const { userId } = await authenticate(request);
-    const params = request.params as { id: string };
-    const message = await store.findMessage(params.id);
+    const message = await store.findMessage(idParam(request.params, "id"));
     if (!message) throw new NotFoundError("Message not found");
     if (message.recipientId !== userId) throw new ForbiddenError("Only the recipient can report speech");
 

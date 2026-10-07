@@ -56,3 +56,48 @@ jobs:
             sleep 0.5
           done
           node scripts/smoke.mjs http://127.0.0.1:8099
+
+  # The API tests run over the in-memory store; store.pg.ts — the code that runs
+  # in production — is otherwise only type-checked, and a real bug hid there
+  # once (a malformed id became a database error). This job executes the SQL
+  # against real PostgreSQL.
+  postgres:
+    name: PostgreSQL store
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: airwhispers
+          POSTGRES_PASSWORD: airwhispers
+          POSTGRES_DB: airwhispers_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U airwhispers"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://airwhispers:airwhispers@127.0.0.1:5432/airwhispers_test
+      LOG_LEVEL: silent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Apply the schema (the deploy path)
+        run: DATABASE_URL="$TEST_DATABASE_URL" npm run schema
+
+      - name: Store tests against real PostgreSQL
+        run: npm test
