@@ -203,7 +203,9 @@ jobs:
     needs: android
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.create_release) ||
-      startsWith(github.ref, 'refs/tags/')
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') &&
+       startsWith(github.event.head_commit.message, 'release: publish Android '))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -248,6 +250,9 @@ jobs:
           NOTES
           echo "" >> notes.md
           echo "Commit: \`$GITHUB_SHA\`" >> notes.md
+          echo "Build and verification: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> notes.md
+          echo "" >> notes.md
+          echo "Signed with the repository's demo identity; not intended for production-store distribution." >> notes.md
 
       - name: Create or update the release
         env:
@@ -261,6 +266,11 @@ jobs:
           else
             TAG="${INPUT_TAG:-android-v${INPUT_VERSION:-1.1.2}}"
           fi
+          # An explicit branch release must not displace a newer release line.
+          LATEST_OPTIONS=()
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/* ]]; then
+            LATEST_OPTIONS=(--latest=false)
+          fi
           echo "Releasing as $TAG"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" apks/*.apk apks/*.sha256 --clobber
@@ -269,6 +279,7 @@ jobs:
               --target "$GITHUB_SHA" \
               --title "AirWhispers Android $TAG" \
               --notes-file notes.md \
+              "${LATEST_OPTIONS[@]}" \
               apks/*.apk apks/*.sha256
           fi
           gh release view "$TAG" --json url,assets --jq '"release: \(.url)", (.assets[] | "asset: \(.name) (\(.size) bytes)")'

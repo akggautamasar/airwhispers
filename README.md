@@ -95,6 +95,14 @@ all of them attached.
 Releases cut from this branch: `android-v1.0.0`, `android-v1.0.1`, `android-v1.1.0`,
 `android-v1.1.1`.
 
+When manual workflow dispatch is unavailable, a branch push whose commit subject
+starts with `release: publish Android ` also publishes the verified APKs. First
+update the version defaults in `android/app/build.gradle.kts` and
+`.github/workflows/android.yml` (including the verification expectation), then
+push a commit such as `release: publish Android v1.1.2`. This uses the workflow's
+default version for the release tag and deliberately does **not** replace the
+repository's Latest release. Ordinary branch pushes only build and test.
+
 Two product flavors:
 
 | Flavor | What it does | Needs |
