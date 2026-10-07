@@ -133,6 +133,59 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # Proves the artefact rather than trusting the build: signature, package id,
+      # version and the presence of the Hindi resources are all checked here.
+      - name: Verify the release APK
+        run: |
+          set -euo pipefail
+          APK="artifacts/app-standalone-release.apk"
+          EXPECTED_VERSION="${{ inputs.version_name }}"
+          EXPECTED_VERSION="${EXPECTED_VERSION:-1.0.0}"
+
+          echo "::group::APK integrity"
+          test -f "$APK" || { echo "::error::release APK missing"; exit 1; }
+          unzip -t "$APK" >/dev/null || { echo "::error::APK is not a valid zip"; exit 1; }
+          unzip -l "$APK" | grep -q "classes.dex"   || { echo "::error::no classes.dex in APK"; exit 1; }
+          unzip -l "$APK" | grep -q "resources.arsc" || { echo "::error::no resources.arsc in APK"; exit 1; }
+          (cd artifacts && sha256sum -c app-standalone-release.apk.sha256)
+          echo "::endgroup::"
+
+          echo "::group::Manifest (aapt2)"
+          BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -1 || true)"
+          AAPT2="$BUILD_TOOLS/aapt2"
+          if [ -x "$AAPT2" ]; then
+            BADGING="$("$AAPT2" dump badging "$APK")"
+            echo "$BADGING" | head -5
+            PKG="$(printf '%s\n' "$BADGING" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+            [ "$PKG" = "com.airwhispers" ] || { echo "::error::package is '$PKG', expected com.airwhispers"; exit 1; }
+            VNAME="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")"
+            [ "$VNAME" = "$EXPECTED_VERSION" ] || { echo "::error::versionName is '$VNAME', expected '$EXPECTED_VERSION'"; exit 1; }
+            if printf '%s\n' "$BADGING" | grep -q "^application-debuggable"; then
+              echo "::error::release APK is debuggable"; exit 1
+            fi
+          else
+            echo "aapt2 not found, skipping manifest checks"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Signature"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          if [ -x "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs "$APK" | head -8
+          else
+            echo "apksigner not found, skipping signature check"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Bundled languages"
+          # Devanagari bytes ("अभी") inside resources.arsc — i.e. the Hindi UI shipped.
+          if unzip -p "$APK" resources.arsc | grep -aq $'\xe0\xa4\x85\xe0\xa4\xad\xe0\xa5\x80'; then
+            echo "Hindi (hi) resources present"
+          else
+            echo "::error::Hindi resources are missing from the release APK"; exit 1
+          fi
+          echo "::endgroup::"
+
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:

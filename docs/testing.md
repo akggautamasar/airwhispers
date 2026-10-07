@@ -11,6 +11,7 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
 | Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Auth, authorization, messaging, idempotency, receipts, contacts, settings, rate limiting |
 | Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, receipt, logout |
 | Android lint | `android/app/build.gradle.kts` (`lint { abortOnError = true }`) | as part of CI | API-level misuse (`NewApi`), permission mistakes (`MissingPermission`), Compose correctness (`StateFlowValueCalledInComposition`) — the only automated check that can catch device-behaviour bugs without a phone |
+| APK verification | `.github/workflows/android.yml` (“Verify the release APK”) | as part of CI | Zip integrity, SHA-256 self-check, `aapt2 dump badging` (package id, version name, not debuggable), `apksigner verify --print-certs`, and a byte-level check that the Hindi resources actually shipped inside `resources.arsc` |
 | CI | `.github/workflows/` | push / PR | All of the above, plus the release APK build |
 
 ### Android unit tests
