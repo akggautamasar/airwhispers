@@ -20,9 +20,11 @@
     <!-- Restart the call-assist notification after a reboot (never the service itself). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Audio: we never record audio. MODIFY_AUDIO_SETTINGS is used for
-         requestAudioFocus()/setCommunicationDevice() style routing requests. -->
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Audio: no permission is needed at all. We request transient audio focus and
+         read the system audio mode; both are permission-free. MODIFY_AUDIO_SETTINGS is
+         deliberately NOT requested because the app never calls setMode,
+         setCommunicationDevice or setSpeakerphoneOn — those can reroute the call the
+         user is on. See docs/security.md#the-apps-permissions-and-why-each-one-exists. -->
 
     <!-- READ_PHONE_STATE is only used to observe the *local* telephony call state
          (TelephonyCallback) so Call Assist can auto-activate. It does not give

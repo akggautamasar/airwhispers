@@ -128,8 +128,11 @@ android {
         abortOnError = true
         warningsAsErrors = false
         checkDependencies = false
+        // The text report is what CI reads back when lint fails (the HTML one would be
+        // uploaded as an artifact, which is not always retrievable).
+        textReport = true
         xmlReport = true
-        htmlReport = true
+        htmlReport = false
     }
 }
 

@@ -115,12 +115,14 @@ than not implementing it, so v1 documents the path instead of shipping a hand-ro
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `FOREGROUND_SERVICE_SPECIAL_USE` | Keep the armed session and speak while another app is on screen | Nothing about the other app's audio |
 | `POST_NOTIFICATIONS` | Show the Call Assist status and message notifications (Android 13+) | — |
 | `READ_PHONE_STATE` *(optional, requested only if you enable automatic telephony detection)* | Detect that a **cellular** call is active | No call content, no numbers, no call log access; it is not needed for VoIP detection, which uses the public audio APIs |
-| `BLUETOOTH_CONNECT` | Read the *name* of the connected output device for the UI | Cannot connect, disconnect or reroute anything; removed from the manifest in the current build (see android-limitations.md) |
+| *(none for Bluetooth)* | Route reporting uses `AudioManager.getDevices`, which needs no permission | No connect/disconnect/reroute capability is requested at all |
 | `RECEIVE_BOOT_COMPLETED` | Show a "Call Assist is off" notification after a reboot rather than silently starting anything | — |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` *(declared for the user-initiated prompt)* | Let the user stop Samsung/Huawei-style battery managers from killing the session mid-call | — |
 
 Deliberately **absent**: `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `READ_CALL_LOG`, `READ_CONTACTS`,
-`READ_SMS`, `SYSTEM_ALERT_WINDOW`, `QUERY_ALL_PACKAGES`, and any accessibility service.
+`READ_SMS`, `SYSTEM_ALERT_WINDOW`, `QUERY_ALL_PACKAGES`, `BLUETOOTH_CONNECT`, and any
+accessibility service. The full permission list is ten entries long — the manifest is the
+source of truth and the list above is kept in sync with it.
 
 `MODIFY_AUDIO_SETTINGS` deserves a note: it is the permission that would allow changing the
 *communication* device or the audio mode. Requesting it would look like capability the app is

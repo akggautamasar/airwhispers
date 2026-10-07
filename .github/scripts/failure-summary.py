@@ -20,6 +20,21 @@ WORKSPACE = os.environ.get("GITHUB_WORKSPACE", ".")
 
 out: list[str] = []
 
+# ------------------------------------------------------------- Android lint text
+# The text report names the file, line and rule for every issue, which is exactly
+# what is needed to fix a failing build without a local Android SDK.
+for txt in sorted(glob.glob(os.path.join(WORKSPACE, "android/**/lint-results-*.txt"), recursive=True)):
+    lines = open(txt, errors="replace").read().splitlines()
+    picked = [
+        line.strip()[:400]
+        for line in lines
+        if ": Error:" in line or ": Warning:" in line or line.startswith("Lint found")
+    ]
+    errors = [line for line in picked if ": Error:" in line]
+    if picked:
+        out.append(f"===== {os.path.basename(txt)}: {len(errors)} errors, {len(picked) - len(errors)} warnings =====")
+        out.extend(dict.fromkeys(errors[:40]))
+
 # ----------------------------------------------------------------- Gradle output
 ERROR_PATTERNS = (
     re.compile(r"^e: "),                     # Kotlin compiler error
@@ -51,7 +66,12 @@ for path in sorted(glob.glob(os.path.join(WORKSPACE, "build-logs", "*.log"))):
         out.append(f"===== {name}: errors =====")
         # de-duplicate while keeping order
         out.extend(dict.fromkeys(picked[:60]))
-    tail = [line.strip() for line in lines[-30:] if line.strip()]
+    tail = [
+        line.strip()
+        for line in lines[-30:]
+        # Gradle stack traces are noise; the message above them is what matters.
+        if line.strip() and not line.strip().startswith(("at ", "Caused by: org.gradle", "\tat "))
+    ]
     if tail:
         out.append(f"===== {name}: last lines =====")
         out.extend(tail)
