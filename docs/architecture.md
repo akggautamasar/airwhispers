@@ -145,7 +145,9 @@ the speech pipeline, backend or tests refers to the brand.
 Localisation:
 
 * `values/strings.xml` (English) and `values-hi/strings.xml` (Hindi) carry identical key sets —
-  98 strings each, checked by comparing the two files.
+  139 strings each, checked by comparing the two files. Screens read them with
+  `stringResource(...)`; the only hard-coded text left in the UI is decoration (arrows,
+  emoji glyphs) and URLs.
 * `res/xml/locales_config.xml` declares `en` and `hi` and is referenced from the manifest
   (`android:localeConfig`), so Android 13+ offers *Settings → Apps → AirWhispers → Language*.
 * The **interface** language and the **speech** language are deliberately separate settings: a
@@ -193,6 +195,10 @@ GitHub Actions ──▶ release APK ──▶ GitHub Release (with SHA-256 chec
 
 docker compose up   →  postgres:16 + airwhispers-backend (built from backend/Dockerfile)
 ```
+
+CI gates on: TypeScript type-check, backend API tests, a live smoke test, Android unit tests,
+**Android lint with `abortOnError`** (permission and API-level correctness) and both APK
+builds. Nothing reaches a release without all of them passing.
 
 Production checklist: `JWT_SECRET` (≥ 32 random bytes), `DATABASE_URL`, TLS-terminating
 reverse proxy, `TRUST_PROXY=true` so rate limiting sees real client IPs, `PUSH_INCLUDES_CONTENT=false`

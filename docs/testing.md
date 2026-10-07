@@ -10,7 +10,8 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
 | Android unit tests | `android/app/src/test/java/com/airwhispers/` | `cd android && ./gradlew testStandaloneDebugUnitTest` | Text normalisation, queue semantics, assist decision gates |
 | Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Auth, authorization, messaging, idempotency, receipts, contacts, settings, rate limiting |
 | Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, receipt, logout |
-| CI | `.github/workflows/` | push / PR | Both of the above, plus the release APK build |
+| Android lint | `android/app/build.gradle.kts` (`lint { abortOnError = true }`) | as part of CI | API-level misuse (`NewApi`), permission mistakes (`MissingPermission`), Compose correctness (`StateFlowValueCalledInComposition`) — the only automated check that can catch device-behaviour bugs without a phone |
+| CI | `.github/workflows/` | push / PR | All of the above, plus the release APK build |
 
 ### Android unit tests
 
@@ -124,6 +125,8 @@ above; what a device must confirm is exactly the table in this and the previous 
 1. `cd backend && npm test` — type-check + 12 API tests.
 2. `cd backend && node scripts/smoke.mjs <url>` against a running server.
 3. `cd android && ./gradlew testStandaloneDebugUnitTest` — 32 unit tests (14 normaliser, 10 assist, 8 queue).
-4. `cd android && ./gradlew assembleStandaloneRelease` — the APK still builds.
-5. If you touched the speech pipeline: re-run at least the core loop (steps 1–3, 8–10) on one
+4. `cd android && ./gradlew lintStandaloneRelease` — no lint errors (a clean build proves the
+   API-level guards are in place).
+5. `cd android && ./gradlew assembleStandaloneRelease` — the APK still builds.
+6. If you touched the speech pipeline: re-run at least the core loop (steps 1–3, 8–10) on one
    device and record the result in the PR description.
