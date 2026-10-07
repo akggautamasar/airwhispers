@@ -27,6 +27,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.airwhispers.BuildConfig
 import com.airwhispers.data.model.EmojiMode
+import com.airwhispers.data.model.SpeechOutput
 import com.airwhispers.ui.AppViewModel
 import com.airwhispers.ui.components.InfoBanner
 import com.airwhispers.ui.components.SectionCard
@@ -42,6 +43,8 @@ fun SettingsScreen(viewModel: AppViewModel) {
     val relay by viewModel.relayState.collectAsState()
     var showNewCodeDialog by remember { mutableStateOf(false) }
     var showEmojiPicker by remember { mutableStateOf(false) }
+    var showLanguagePicker by remember { mutableStateOf(false) }
+    var showOutputPicker by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -75,8 +78,10 @@ fun SettingsScreen(viewModel: AppViewModel) {
         SectionCard(title = "Speech") {
             SettingRow(
                 title = "Language",
-                subtitle = speech.languageTag,
+                subtitle = LANGUAGES.firstOrNull { it.first == speech.languageTag }?.second
+                    ?: speech.languageTag,
                 trailing = { Text("›") },
+                onClick = { showLanguagePicker = true },
             )
             SettingRow(
                 title = "Speed",
@@ -109,6 +114,20 @@ fun SettingsScreen(viewModel: AppViewModel) {
             SettingRow(
                 title = "Pause between messages",
                 subtitle = "${speech.pauseBetweenMessagesMs} ms",
+                trailing = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        TextButton(onClick = {
+                            viewModel.updateSpeech {
+                                it.copy(pauseBetweenMessagesMs = (it.pauseBetweenMessagesMs - 200L).coerceAtLeast(0L))
+                            }
+                        }) { Text("−") }
+                        TextButton(onClick = {
+                            viewModel.updateSpeech {
+                                it.copy(pauseBetweenMessagesMs = (it.pauseBetweenMessagesMs + 200L).coerceAtMost(3000L))
+                            }
+                        }) { Text("+") }
+                    }
+                },
             )
             SettingRow(
                 title = "Emoji speech",
@@ -119,6 +138,8 @@ fun SettingsScreen(viewModel: AppViewModel) {
             SettingRow(
                 title = "Output",
                 subtitle = AppViewModel.OUTPUT_LABEL[speech.output] ?: speech.output.name,
+                trailing = { Text("›") },
+                onClick = { showOutputPicker = true },
             )
             SwitchRow(
                 title = "Whisper mode",
@@ -204,6 +225,42 @@ fun SettingsScreen(viewModel: AppViewModel) {
         )
     }
 
+    if (showLanguagePicker) {
+        AlertDialog(
+            onDismissRequest = { showLanguagePicker = false },
+            title = { Text("Which language should AirWhispers speak?") },
+            text = {
+                Column {
+                    LANGUAGES.forEach { (tag, label) ->
+                        TextButton(onClick = {
+                            viewModel.updateSpeech { it.copy(languageTag = tag) }
+                            showLanguagePicker = false
+                        }) { Text(label) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showLanguagePicker = false }) { Text("Close") } },
+        )
+    }
+
+    if (showOutputPicker) {
+        AlertDialog(
+            onDismissRequest = { showOutputPicker = false },
+            title = { Text("Where should it speak?") },
+            text = {
+                Column {
+                    SpeechOutput.entries.forEach { output ->
+                        TextButton(onClick = {
+                            viewModel.updateSpeech { it.copy(output = output) }
+                            showOutputPicker = false
+                        }) { Text(AppViewModel.OUTPUT_LABEL[output] ?: output.name) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showOutputPicker = false }) { Text("Close") } },
+        )
+    }
+
     if (showEmojiPicker) {
         AlertDialog(
             onDismissRequest = { showEmojiPicker = false },
@@ -222,3 +279,11 @@ fun SettingsScreen(viewModel: AppViewModel) {
         )
     }
 }
+
+/** The languages the speech pipeline is actually tuned for (see docs/tts.md). */
+private val LANGUAGES = listOf(
+    "en-IN" to "English (India)",
+    "en-US" to "English (US)",
+    "en-GB" to "English (UK)",
+    "hi-IN" to "हिन्दी (Hindi)",
+)

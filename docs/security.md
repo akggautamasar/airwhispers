@@ -10,8 +10,10 @@ description of the current posture and the reasoning behind each decision.
 | --- | --- | --- |
 | Someone on the same Wi-Fi (passive eavesdropper) | TLS in production; cleartext allowed only for a private LAN development server | A development deployment on plain HTTP is readable — the app warns in the UI |
 | Someone who steals the phone, unlocked app data | Tokens encrypted with a non-exportable Android Keystore key; `allowBackup=false`; message cache in app-private SQLite | Rooted device or a full-disk image can recover the local cache |
-| Someone who steals the *server* database | Passwords hashed with scrypt (N=16384, per-user salt); refresh tokens stored as SHA-256 hashes; message bodies are the only plaintext, by design | Message text is readable by whoever runs the server — see the E2EE path below |
-| A malicious API client | Per-route authorization (membership, recipient, ownership), scrypt cost, rate limits, uniform error envelopes | No device attestation; a stolen refresh token is usable until revoked |
+| Someone who steals the *server* database | Device secrets hashed with scrypt (per-credential salt); codes are the only identifiers; message bodies are the only plaintext, by design | Message text is readable by whoever runs the server — see the E2EE path below |
+| A malicious API client | Per-route authorization (membership, recipient, listener owns consent), scrypt cost, rate limits, uniform error envelopes | No device attestation; a stolen device secret is usable until revoked (`/device/forget`) |
+| A stranger who guesses a code | 6 characters from a 32-symbol alphabet (≈ 1.07 × 10⁹ codes), registration and chat-creation rate limits, and **default-deny speech**: guessing a code only lets someone *send* a message; it can never make your phone speak |
+| A sender who wants audio to play | Consent lives on the listener's device (`trusts`); `priority: SPEAK_NOW` is a request, and Call Assist re-checks the local switch before speaking | — |
 | Another app on the device | No exported components except the quick-settings tile and the notification actions, both of which only start/stop the local service; no content providers, no broadcast receivers that accept foreign input | A malicious app with `READ_LOGS` (root) could read logs — we never log message text |
 | The speech engine vendor (if a cloud TTS were used) | We use the **device** TTS engine; text never leaves the phone for synthesis | A device vendor's TTS engine could upload in theory, which is why the engine is swappable behind `SpeechSynthesizer` |
 | Google (when the `fcm` flavor is used) | Push payloads carry *no message text* unless the server operator explicitly enables `PUSH_INCLUDES_CONTENT` | Metadata (that a message arrived, sender, timestamp) passes through FCM |
@@ -19,25 +21,39 @@ description of the current posture and the reasoning behind each decision.
 Explicit non-goals: resisting a compromised *device* (rootkits, accessibility-based
 attackers), resisting a compromised *server operator*, and hiding metadata from the platform.
 
-## Authentication and sessions
+## Identity: devices, not accounts
 
-* **Passwords**: scrypt with a per-user 16-byte salt, N=16384, r=8, p=1, 32-byte key,
-  stored as `scrypt$N$salt$key`. Verification is constant-time (`timingSafeEqual`).
-* **Access token**: JWT HS256, 15 minutes, `typ: "access"`, subject = user id. Verified on
-  every request; the `typ` claim prevents a refresh token from being used as an access token.
-* **Refresh token**: 32 random bytes, base64url, returned exactly once, stored as a SHA-256
-  hash with `expires_at`, `rotated_at`, `revoked_at`. **Every use rotates it**; reusing a
-  rotated token revokes the family and returns `401`.
-* **Logout**: revokes the presented token (and its family). Empty bodies are accepted, so the
-  client can always clean up.
-* **Rate limits** (per IP): register 10/min, login 20/min, refresh 60/min; sends are limited
-  to 120/min per user. Exceeding returns `429` with `retryAfterMs`.
+There are no passwords to protect because there are no passwords.
+
+* **Code**: 6 characters from `abcdefghjkmnpqrstuvwxyz23456789` (no `0/o/1/l/i` because it is
+  read aloud). Stored lowercase, compared case-insensitively, normalised from sloppy input
+  (`K7M-2PQ` → `k7m2pq`). Uniqueness is enforced by the database; the server retries a
+  collision a few times before answering `409`.
+* **Device secret**: 32 random bytes (base64url), returned exactly once at registration and
+  kept in the Android Keystore on the phone. The server stores only `scrypt$N$salt$key`
+  (per-credential salt, constant-time verification). Because the secret is 256 bits of
+  entropy rather than a human password, a modest scrypt cost (N=4096) is enough to make an
+  offline attack on a leaked dump pointless — and it keeps silent re-authentication fast.
+* **Access token**: JWT HS256, 1 hour, `typ: "access"`, subject = device identity, plus the
+  `deviceId` claim. Verified on every request.
+* **Silent re-authentication**: `POST /device/token` (or `/device/register` with the secret)
+  exchanges the secret for a fresh token. A burst of 401s triggers exactly one refresh
+  (single-flight mutex in `ApiClient`); if the secret itself is rejected, the app registers
+  again and the user simply sees a new code — there is no login screen that could fail.
+* **Rotation / revocation**: `POST /device/forget` deletes the credential; the old secret is
+  dead immediately and the next registration mints a new code. There is no session family to
+  replay, because there is no refresh-token chain.
+* **Rate limits** (per IP or per device): register 60/min, token 120/min, forget 10/min,
+  chat creation 60/min, sends 120/min, consent 60/min. Exceeding returns `429` with
+  `retryAfterMs`.
+* **Closing the door**: `ALLOW_NEW_DEVICES=false` makes the server reject *new* identities
+  while existing devices keep resuming. Useful for a friends-and-family server.
 
 ## Token storage on the device
 
-`SecretStore` keeps the access/refresh tokens and the account id in an `EncryptedSharedPrefs`
-style blob: AES-256-GCM with a key generated inside the **Android Keystore** and marked
-non-exportable. A fresh IV is generated per write and stored alongside the ciphertext; the
+`SecretStore` keeps the access token, the device secret and the identity id in an
+`EncryptedSharedPrefs` style blob: AES-256-GCM with a key generated inside the **Android
+Keystore** and marked non-exportable. A fresh IV is generated per write and stored alongside the ciphertext; the
 GCM tag means a tampered file fails to decrypt and is discarded rather than trusted.
 
 Nothing sensitive is written to plain `SharedPreferences`, to the SQLite cache (which holds
@@ -65,12 +81,14 @@ Every route re-derives the caller from the token and then checks the *resource*:
 | --- | --- |
 | `GET/POST /conversations/:id/messages` | Caller is a member of the conversation → else `403 NOT_A_MEMBER` |
 | `POST /messages/:id/read`, `/spoken` | Caller is the message **recipient** → else `403 NOT_RECIPIENT` |
-| `PATCH/DELETE /contacts/:id` | The contact row belongs to the caller |
+| `PATCH /conversations/:id/trust` | The caller is the **listener** (the peer whose phone would speak) |
+| `GET/PATCH /me` | Scoped to the token subject |
 | `GET /conversations` | Only conversations the caller is a member of |
 | Everything else | Authenticated, and scoped to `sub` |
 
 The tests assert these negatives explicitly (a stranger cannot read a conversation, cannot
-mark someone else's message read, cannot edit someone else's contact).
+mark someone else's message read, cannot change consent for a pair they are not part of, and
+cannot grant themselves the right to be spoken to).
 
 ## Message content
 
@@ -97,9 +115,10 @@ product surface:
 2. The server never needs to see plaintext because it does not generate or read it: the
    server's only content-derived behaviour is *fan-out*, and the pipeline on the device
    (`CallAssistEngine`) already works on locally-decrypted text.
-3. Key material belongs in the Android Keystore, alongside the existing token encryption, and
-   public keys would be published per device via the existing `/devices` route extended with a
-   `publicKey` field.
+3. Key material belongs in the Android Keystore, alongside the existing device-secret
+   encryption, and public keys would be published per device via the existing `/devices`
+   route extended with a `publicKey` field — no identity system to retrofit, because
+   identities are already per-device.
 4. Push payloads already omit content, so notification text does not leak ciphertext metadata.
 
 What is honestly **missing** for E2EE: per-device key exchange, multi-device sender keys,

@@ -8,8 +8,8 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
 | Suite | Where | Command | Covers |
 | --- | --- | --- | --- |
 | Android unit tests | `android/app/src/test/java/com/airwhispers/` | `cd android && ./gradlew testStandaloneDebugUnitTest` | Text normalisation, queue semantics, assist decision gates |
-| Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Auth, authorization, messaging, idempotency, receipts, contacts, settings, rate limiting |
-| Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, receipt, logout |
+| Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Device identity and codes, consent, messaging, idempotency, receipts, rate limiting |
+| Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, consent, receipt |
 | CI | `.github/workflows/` | push / PR | Both of the above, plus the release APK build |
 
 ### Android unit tests
@@ -23,8 +23,8 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
   overtaking, bounded depth with oldest-normal eviction, pause blocking `awaitNext` and
   resume releasing it, skip emitting an interruption and keeping the queue, stop emptying
   everything, and the exact spoken phrasing including sender announcement.
-* **`CallAssistEngineTest`** — every gate in the pipeline (off, not in a call, untrusted
-  sender, own message, nothing to speak, full queue), the claim granting speech exactly once
+* **`CallAssistEngineTest`** — every gate in the pipeline (off, not in a call, sender not
+  allowed, own message, nothing to speak, full queue), the claim granting speech exactly once
   and returning `ALREADY_SPOKEN` afterwards, `UNKNOWN_MESSAGE` for an unpersisted message,
   the claim *not* being consumed when the queue is full, and `SPEAK_NOW` phrasing.
 
@@ -36,13 +36,16 @@ milliseconds on any machine (and on the CI runner, which has no emulator).
 They build the real Fastify app over the in-memory store, so the code under test is the same
 code production runs — only the storage differs.
 
-Asserted invariants include: duplicate registration → `409`; wrong password → `401` (same
-answer as an unknown email); refresh rotation invalidating the old token; a stranger cannot
-read a conversation (`403`), cannot mark another user's message read (`403`); duplicate
-`clientMessageId` returns the original message with `200` and never creates a second row;
-history reads stamp `delivered_at`; `spoken` receipts are recipient-only and always `204`;
-`PATCH /contacts/:id` upserts a trust flag; new contacts default to untrusted; per-scope rate
-limits return `429`; and validation failures return `422` with the standard error envelope.
+Asserted invariants include: a code is 6 characters from the unambiguous alphabet and unique
+per device (100 registrations, zero collisions); resuming with the device secret returns the
+**same** code while a wrong secret returns `401`; the secret itself is never stored in
+plaintext; a stranger cannot read a conversation (`403`) nor mark another user's message read
+(`403`); only the *listener* can change consent for a pair; duplicate `clientMessageId`
+returns the original message with `200` and never creates a second row; history reads stamp
+`delivered_at`; `spoken` receipts are recipient-only and always `204`; a code that is not
+normalised (`" K7M-2PQ "` → `k7m2pq`) still resolves while an unknown or self code is
+rejected; per-scope rate limits return `429` with `retryAfterMs`; and validation failures use
+the standard error envelope.
 
 ### CI
 
@@ -64,9 +67,8 @@ each device in the matrix; it takes about fifteen minutes.
 
 1. Server reachable from both phones (`docker compose up` is fine).
 2. Install `app-standalone-release.apk` on both.
-3. Phone A: sign in, **Call Assist → Start Call Assist**, add B as a contact and switch the
-   🔊 trust toggle on.
-4. Phone B: sign in, add A as a contact.
+3. Phone A: note the code on the home screen, **Call Assist → Start listening**.
+4. Phone B: ✏️ → type A's code (tap **Copy** on A to send it over any channel).
 5. Confirm in Settings → Device capability that the app reports what it can and cannot detect.
 
 ### Core loop
@@ -80,10 +82,10 @@ each device in the matrix; it takes about fifteen minutes.
 | 5 | Tap **Skip** during an utterance | The utterance stops mid-sentence, the next message starts |
 | 6 | Tap **Stop** | Speech stops and the pending queue is emptied |
 | 7 | Have B send a message, then lock the screen and press power to sleep the phone | The message is still spoken |
-| 8 | Have B press **🔊 Speak Now** while A's queue holds a normal message | The urgent message is spoken next, phrased "Important. …" |
+| 8 | Have B press **🔊 Whisper** while A's queue holds a normal message | The urgent message is spoken next, phrased "Important. …" |
 | 9 | Send a message that was already spoken, from the same conversation history (or toggle airplane mode and back so the socket reconnects) | Nothing is spoken twice |
 | 10 | Turn **Call Assist off** on A, then have B send a message | No speech at all, a normal notification appears |
-| 11 | Untrust B, count a message | Not spoken; notification only |
+| 11 | Turn the 🔇/🔊 switch in the chat header off, then have B send a message | Not spoken; notification only |
 | 12 | Switch A to airplane mode, have B send a message, then restore connectivity | The message arrives and is spoken once |
 | 13 | Kill the app from recents while Call Assist is armed (fcm flavor) | Depending on the platform, the session ends; the app must not claim otherwise — reopen and it says Call Assist is off |
 

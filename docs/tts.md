@@ -14,7 +14,7 @@ CallAssistEngine.evaluate()
    1  own message?            → DROP          (unless speakOwnMessages)
    2  Call Assist enabled?    → NOTIFY_ONLY   ("call_assist_off")
    3  onlyDuringCalls?        → NOTIFY_ONLY   ("not_in_call")
-   4  sender trusted?         → NOTIFY_ONLY   ("sender_not_trusted")
+   4  sender allowed by me?   → NOTIFY_ONLY   ("sender_not_trusted")
    5  anything to say?        → NOTIFY_ONLY   ("nothing_to_speak")
    6  queue has room?         → NOTIFY_ONLY   ("queue_full")
    7  claim {GRANTED}                      ← durable, atomic, once ever
@@ -132,8 +132,15 @@ the claim was taken, closing the one race between steps 6–8.
 
 * Attributes: `USAGE_MEDIA`, `CONTENT_TYPE_SPEECH`. Focus: `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`
   for the length of one utterance, abandoned immediately after.
-* Whisper mode: the TTS parameter `KEY_PARAM_VOLUME` is set to 0.45 instead of the engine's
-  default. This is a *quiet-mode* feature, not a claim that others cannot hear it.
+* **Whisper mode** (on by default, `ProductConfig.WHISPER_MODE_ENABLED` is the kill-switch):
+  the TTS parameter `KEY_PARAM_VOLUME` is set to 0.45 instead of the engine's default, so the
+  sentence is spoken *quietly* — intended for earbuds or the phone held to your ear while you
+  are on a call, not for the room. It deliberately does **not** change the audio mode, the
+  communication route or the speakerphone state, because doing so is what would disturb the
+  call you are on; the only audio interaction with that call is a transient
+  `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` for the length of one utterance. It is a *quiet-mode*
+  feature, not a claim that people next to you cannot hear anything — earbuds are what make
+  it private.
 * Rate/pitch come from `SpeechSettings` (defaults 1.0/1.0, clamped to 0.5–2.0 server-side).
 * The synthesizer creates the engine on the main looper, waits for initialisation (5 s
   timeout), falls back to the engine's default voice if the requested locale/voice is

@@ -29,7 +29,8 @@
     <string name="chat_send">भेजें</string>
     <string name="chat_speak_now">अभी बोलें</string>
     <string name="chat_speak_now_description">“अभी बोलें” संदेश को चिह्नित करता है ताकि Call Assist वाला प्राप्तकर्ता उसे जल्द से जल्द सुन सके।</string>
-    <string name="chat_empty_state">अभी कोई संदेश नहीं।\nनमस्ते कहिए…</string>
+    <string name="chat_empty_state">अभी कोई संदेश नहीं।
+नमस्ते कहिए…</string>
     <string name="chat_new">नई चैट</string>
     <string name="chat_pending">भेजा जा रहा है…</string>
     <string name="chat_failed">नहीं भेजा गया। दोबारा भेजने के लिए टैप करें।</string>

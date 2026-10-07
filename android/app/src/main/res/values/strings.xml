@@ -23,8 +23,9 @@
     <string name="chat_input_hint">Message</string>
     <string name="chat_send">Send</string>
     <string name="chat_speak_now">Whisper now</string>
-    <string name="chat_speak_now_description">Whisper now asks the recipient's Call Assist to speak this message as soon as it is allowed to.</string>
-    <string name="chat_empty_state">No messages yet.\nSay hello…</string>
+    <string name="chat_speak_now_description">Whisper now asks the recipient\'s Call Assist to speak this message as soon as it is allowed to.</string>
+    <string name="chat_empty_state">No messages yet.
+Say hello…</string>
     <string name="chat_new">New chat</string>
     <string name="chat_pending">Sending…</string>
     <string name="chat_failed">Not sent. Tap to retry.</string>
