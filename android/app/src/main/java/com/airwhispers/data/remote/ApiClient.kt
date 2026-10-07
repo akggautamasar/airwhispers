@@ -17,6 +17,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
@@ -242,9 +243,19 @@ class ApiClient(
     private suspend fun <T> get(path: String, serializer: DeserializationStrategy<T>): AppResult<T> =
         decode(request("GET", path, null, authenticated = true), serializer)
 
+    /**
+     * Unwraps the transport result and parses it. Errors travel through untouched so
+     * callers can distinguish "network down" from "malformed response".
+     */
+    private fun <T> decode(raw: AppResult<String?>, serializer: DeserializationStrategy<T>): AppResult<T> =
+        when (raw) {
+            is AppResult.Err -> raw
+            is AppResult.Ok -> decode(raw.value, serializer)
+        }
+
     private fun <T> decode(raw: String?, serializer: DeserializationStrategy<T>): AppResult<T> {
         if (raw.isNullOrBlank()) {
-            return AppResult.Err(AppError.server("Empty response from server", httpStatus = 200))
+            return AppResult.Err(AppError.server("Empty response from server", status = 200))
         }
         return runCatching { AppResult.Ok(json.decodeFromString(serializer, raw)) }
             .getOrElse { AppResult.Err(AppError.unknown("Malformed server response", it)) }
@@ -308,11 +319,14 @@ class ApiClient(
     }
 
     /**
-     * Body-less POSTs (read/spoken receipts, logout without a refresh token) are
-     * sent with no body at all: an empty body plus a JSON content type is
-     * rejected by some servers, and there is nothing to encode.
+     * Body-less requests. OkHttp refuses `null` bodies for POST/PUT/PATCH, so those
+     * get a zero-length JSON body — the API parses an empty body as `{}` (that is
+     * what makes body-less actions like the `spoken` receipt work).
      */
-    private fun emptyBody(method: String): RequestBody? = null
+    private fun emptyBody(method: String): RequestBody? = when (method.uppercase()) {
+        "POST", "PUT", "PATCH" -> ByteArray(0).toRequestBody(JSON_MEDIA)
+        else -> null
+    }
 
     private fun errorFrom(response: Response, rawBody: String?): AppError {
         val detail = rawBody

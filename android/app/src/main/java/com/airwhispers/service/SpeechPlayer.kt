@@ -58,7 +58,8 @@ class SpeechPlayer(
         }
         loopJob = scope.launch(dispatchers.default) {
             while (isActive) {
-                val item = queue.awaitNext()
+                // awaitNext() only returns null if the queue is closed for good.
+                val item = queue.awaitNext() ?: break
                 activeItemId = item.id
                 val outcome = speak(item, settingsStore.speech.value)
                 activeItemId = null

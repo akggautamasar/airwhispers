@@ -118,25 +118,23 @@ class AirWhispersRepository(
     suspend fun restoreSession(): SessionState = withSession(UNKNOWN_PLACEHOLDER) {
         if (secrets.accessToken().isNullOrBlank()) {
             _session.value = SessionState(status = SessionStatus.SIGNED_OUT)
-            return@withSession
+            return@withSession _session.value
         }
         when (val result = api.me()) {
             is AppResult.Ok -> enterSession(result.value.user.toAccount())
             is AppResult.Err -> {
-                if (result.error.kind == AppErrorKind.UNAUTHORIZED || result.error.kind == AppErrorKind.NETWORK) {
-                    // Offline start: keep the cached identity, refresh later.
-                    val cachedId = secrets.userId()
-                    if (cachedId != null && result.error.kind == AppErrorKind.NETWORK) {
-                        enterSession(Account(cachedId, "", "", null, time.nowMillis()))
-                    } else {
-                        secrets.clearSession()
-                        _session.value = SessionState(status = SessionStatus.SIGNED_OUT, error = result.error)
-                    }
+                val cachedId = secrets.userId()
+                val offline = result.error.kind == AppErrorKind.NETWORK
+                if (offline && cachedId != null) {
+                    // Offline start: keep the cached identity and refresh when we can.
+                    enterSession(Account(cachedId, "", "", null, time.nowMillis()))
                 } else {
+                    secrets.clearSession()
                     _session.value = SessionState(status = SessionStatus.SIGNED_OUT, error = result.error)
                 }
             }
         }
+        _session.value
     }
 
     suspend fun signIn(email: String, password: String): AppError? = withSession(null) {
