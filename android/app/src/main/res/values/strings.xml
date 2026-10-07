@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AirWhispers</string>
+
+    <!-- Branding is centralised here so marketing can rename the product without
+         touching code. See docs/architecture.md#branding-layer. -->
+    <string name="brand_tagline">Messages you can hear</string>
+    <string name="brand_product_short">AirWhispers</string>
+    <string name="brand_call_assist">Call Assist</string>
+
+    <!-- Auth -->
+    <string name="auth_welcome_title">Welcome to AirWhispers</string>
+    <string name="auth_welcome_subtitle">Hear your messages while you are on a call.</string>
+    <string name="auth_backend_label">Server address</string>
+    <string name="auth_backend_helper">The address of an AirWhispers server. Run your own with two commands (see below), or ask whoever invited you. Use https:// for anything outside your own network.</string>
+    <string name="auth_backend_insecure_warning">This address is not encrypted (http://). Messages could be read by others on the network.</string>
+    <string name="auth_display_name">Display name</string>
+    <string name="auth_continue">Continue</string>
+    <string name="auth_connecting">Connecting…</string>
+
+    <!-- Chat -->
+    <string name="chats_title">Chats</string>
+    <string name="chat_input_hint">Message</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_speak_now">Whisper now</string>
+    <string name="chat_speak_now_description">Whisper now asks the recipient\'s Call Assist to speak this message as soon as it is allowed to.</string>
+    <string name="chat_empty_state">No messages yet.
+Say hello…</string>
+    <string name="chat_new">New chat</string>
+    <string name="chat_pending">Sending…</string>
+    <string name="chat_failed">Not sent. Tap to retry.</string>
+    <string name="chat_sent">Sent</string>
+    <string name="chat_delivered">Delivered</string>
+    <string name="chat_read">Read</string>
+    <string name="chat_spoken">Read aloud</string>
+
+    <!-- Contacts -->
+    <string name="contacts_title">Contacts</string>
+    <string name="contacts_add">Add contact</string>
+    <string name="contacts_trusted">Allowed to whisper to me</string>
+    <string name="contacts_empty">No chats yet. Add someone by their code.</string>
+
+    <!-- Call Assist -->
+    <string name="call_assist_title">Call Assist</string>
+    <string name="call_assist_active">Call Assist is on</string>
+    <string name="call_assist_inactive">Call Assist is off</string>
+    <string name="call_assist_start">Start Call Assist</string>
+    <string name="call_assist_stop">Stop Call Assist</string>
+    <string name="call_assist_read_aloud">Speak incoming messages</string>
+    <string name="call_assist_read_aloud_summary">Messages are normal notifications unless this is on.</string>
+    <string name="call_assist_only_in_calls">Only during calls</string>
+    <string name="call_assist_only_in_calls_summary">Speak only when a call or communication session is detected.</string>
+    <string name="call_assist_trusted_only">Only people I allow</string>
+    <string name="call_assist_prefer_bluetooth">Prefer Bluetooth</string>
+    <string name="call_assist_detection_ok">Automatic call detection is available on this device (%1$s).</string>
+    <string name="call_assist_detection_unavailable">Automatic call detection isn’t available on this device. Start Call Assist manually before or during a call.</string>
+    <string name="call_assist_now_speaking">Speaking messages from %1$s</string>
+    <string name="call_assist_queue">Waiting: %1$d</string>
+    <string name="call_assist_pause">Pause</string>
+    <string name="call_assist_resume">Resume</string>
+    <string name="call_assist_skip">Skip</string>
+    <string name="call_assist_clear_queue">Clear queue</string>
+    <string name="call_assist_idle">Nothing in the queue.</string>
+
+    <!-- TTS settings -->
+    <string name="settings_tts">Speech</string>
+    <string name="settings_tts_language">Language</string>
+    <string name="settings_tts_speed">Speed</string>
+    <string name="settings_tts_pitch">Pitch</string>
+    <string name="settings_tts_voice">Voice</string>
+    <string name="settings_tts_output">Output</string>
+    <string name="settings_tts_pause_between">Pause between messages</string>
+    <string name="settings_tts_emoji">Emoji speech</string>
+    <string name="emoji_ignore">Ignore emojis</string>
+    <string name="emoji_describe">Describe important emojis</string>
+    <string name="emoji_read_all">Read all emojis</string>
+    <string name="settings_tts_test">Test voice</string>
+    <string name="settings_tts_preview_text">This is how a message will sound.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_privacy">Privacy</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_account">This device</string>
+    <string name="settings_security">Security</string>
+    <string name="settings_about">About</string>
+
+    <!-- Notifications -->
+    <string name="notif_channel_messages">Messages</string>
+    <string name="notif_channel_messages_desc">Incoming message notifications.</string>
+    <string name="notif_channel_call_assist">Call Assist</string>
+    <string name="notif_channel_call_assist_desc">Shows that Call Assist is listening for messages to speak.</string>
+    <string name="notif_channel_errors">Problems</string>
+    <string name="notif_channel_errors_desc">Connection and speech problems you should know about.</string>
+
+    <!-- Permissions -->
+    <string name="perm_notifications_title">Notifications</string>
+    <string name="perm_notifications_rationale">AirWhispers needs notification permission to tell you about new messages and to keep Call Assist visible.</string>
+    <string name="perm_phone_state_title">Call detection (optional)</string>
+    <string name="perm_phone_state_rationale">Lets Call Assist start automatically when a phone call begins. No call audio or call content is ever accessed.</string>
+    <string name="perm_battery_title">Battery optimisation</string>
+    <string name="perm_battery_rationale">Recommended so spoken messages keep working when the screen is off.</string>
+
+    <!-- Errors / states -->
+    <string name="error_generic">Something went wrong. Please try again.</string>
+    <string name="error_offline">You are offline. Messages will be sent when the connection returns.</string>
+    <string name="error_server_unreachable">Can’t reach the server.</string>
+    <string name="tts_unavailable">Speech is unavailable. Check that a text-to-speech engine is installed and enabled in Android settings.</string>
+
+    <string name="action_retry">Retry</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save</string>
+    <string name="action_ok">OK</string>
+    <string name="action_back">Back</string>
+    <string name="action_copy">Copy</string>
+</resources>

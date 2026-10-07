@@ -1,0 +1,59 @@
+# Build output
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+build/
+
+# Gradle
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+.local.properties
+local.properties
+
+# Android Studio / IntelliJ / VS Code
+.idea/
+*.iml
+.DS_Store
+captures/
+
+# Generated or secret material
+android/keystore/*.p12
+android/keystore/*.jks
+android/app/google-services.json
+**/google-services.json
+*.keystore
+!android/keystore/airwhispers-release.key.pem
+!android/keystore/airwhispers-release.cert.pem
+
+# Node / backend
+node_modules/
+backend/dist/
+backend/coverage/
+backend/.env
+backend/.env.*
+!backend/.env.example
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# PostgreSQL data (local development)
+.data/
+.docker-data/
+pgdata/
+
+# Misc
+*.log
+*.tmp
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc

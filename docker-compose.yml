@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airwhispers
+      POSTGRES_PASSWORD: airwhispers
+      POSTGRES_DB: airwhispers
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airwhispers -d airwhispers"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      PORT: "8080"
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://airwhispers:airwhispers@postgres:5432/airwhispers
+      # Replace before exposing this to anything real: openssl rand -base64 48
+      JWT_SECRET: change-me-dev-only-secret-at-least-32-chars
+      TRUST_PROXY: "true"
+      LOG_LEVEL: info
+      PUSH_INCLUDES_CONTENT: "false"
+      # New devices are handed a code on first launch. Set to "false" once your
+      # friends are on board: existing devices keep working, nobody new joins.
+      ALLOW_NEW_DEVICES: "true"
+      # Optional push (only the `fcm` Android flavor uses it): paste the whole
+      # service-account JSON on one line.
+      # GOOGLE_SERVICE_ACCOUNT_JSON: '{"client_email":"...","private_key":"...","project_id":"..."}'
+      # FCM_PROJECT_ID: your-firebase-project
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  pgdata:

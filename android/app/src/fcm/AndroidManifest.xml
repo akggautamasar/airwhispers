@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Cloud push wake-up path. Requires google-services.json at build time. -->
+        <service
+            android:name="com.airwhispers.push.AirWhispersMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <provider
+            android:name="com.airwhispers.push.FcmInitializerProvider"
+            android:authorities="${applicationId}.push-init"
+            android:exported="false"
+            android:initOrder="100" />
+    </application>
+</manifest>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- App mark: a speech bubble whose bars are cut out (fillType=evenOdd), so the
+     background gradient shows through as a waveform. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="1.25"
+        android:scaleY="1.25">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M38,30 H70 A8,8 0 0 1 78,38 V58 A8,8 0 0 1 70,66 H52 L38,78 V66 A8,8 0 0 1 30,58 V38 A8,8 0 0 1 38,30 Z M43,45 h4 v6 h-4 Z M49,41 h4 v14 h-4 Z M55,38 h4 v20 h-4 Z M61,43 h4 v10 h-4 Z" />
+    </group>
+</vector>

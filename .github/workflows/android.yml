@@ -1,0 +1,240 @@
+name: Android
+
+on:
+  push:
+    branches: [main, "arena/**"]
+    tags: ["v*", "android-*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "Version name for the APK (e.g. 1.0.0)"
+        default: "1.0.0"
+        required: true
+      release_tag:
+        description: "Release tag. Leave blank to use android-v<version_name>"
+        default: ""
+      create_release:
+        description: "Publish a GitHub Release with the APK"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Build & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Prepare release signing identity
+        run: bash android/scripts/make-keystore.sh
+
+      - name: Unit tests (normalisation, queue, assist rules)
+        working-directory: android
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          gradle --no-daemon --stacktrace testStandaloneDebugUnitTest \
+            2>&1 | tee "$GITHUB_WORKSPACE/build-logs/unit-tests.log"
+
+      # Renders the failure inside the check-run annotation, which stays readable even
+      # when the raw log or the uploaded artifacts are not reachable.
+      - name: Explain the failure
+        if: failure()
+        run: |
+          python3 .github/scripts/failure-summary.py
+          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
+            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
+          fi
+
+      - name: Assemble release APK (standalone flavour)
+        working-directory: android
+        env:
+          VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          VERSION="${VERSION_NAME:-}"
+          if [ -z "$VERSION" ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"; VERSION="${VERSION#android-v}"; VERSION="${VERSION#v}"
+          fi
+          VERSION="${VERSION:-1.0.0}"
+          echo "Building version $VERSION (code ${{ github.run_number }})"
+          gradle --no-daemon --stacktrace assembleStandaloneRelease \
+            -Pairwhispers.versionName="$VERSION" \
+            -Pairwhispers.versionCode="${{ github.run_number }}" \
+            2>&1 | tee "$GITHUB_WORKSPACE/build-logs/assemblestandalonerelease.log"
+
+      - name: Assemble debug APK
+        working-directory: android
+        env:
+          VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          VERSION="${VERSION_NAME:-}"
+          if [ -z "$VERSION" ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"; VERSION="${VERSION#android-v}"; VERSION="${VERSION#v}"
+          fi
+          gradle --no-daemon --stacktrace assembleStandaloneDebug \
+            -Pairwhispers.versionName="${VERSION:-1.0.0}" \
+            -Pairwhispers.versionCode="${{ github.run_number }}" \
+            2>&1 | tee "$GITHUB_WORKSPACE/build-logs/assemblestandalonedebug.log"
+
+      - name: Compile the FCM flavour (cloud push)
+        working-directory: android
+        continue-on-error: true
+        run: gradle --no-daemon --stacktrace assembleFcmRelease -Pairwhispers.versionCode="${{ github.run_number }}"
+
+      - name: Collect APKs and checksums
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          find android/app/build/outputs/apk -name "*.apk" -print -exec cp {} artifacts/ \;
+          cd artifacts
+          for apk in *.apk; do
+            sha256sum "$apk" > "$apk.sha256"
+          done
+          ls -la
+
+      # GitHub's log download endpoint is not reachable from every environment, so the
+      # raw output and the HTML/JUnit reports are published as an artifact as well.
+      # Same idea as the step above, but for failures in the APK assembly steps: the
+      # Gradle log is on the runner even when the log download API is unreachable.
+      - name: Explain the failure (build steps)
+        if: failure()
+        run: |
+          python3 .github/scripts/failure-summary.py
+          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
+            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
+          fi
+
+      - name: Upload build logs and test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-logs
+          path: |
+            build-logs/**
+            android/app/build/reports/tests/**
+            android/app/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: airwhispers-apks
+          path: artifacts/**
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: android
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.create_release) ||
+      startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: airwhispers-apks
+          path: apks
+
+      - name: Compose release notes
+        run: |
+          cat > notes.md <<'NOTES'
+          ## AirWhispers for Android — messages you can hear
+
+          While you are on a call in WhatsApp, Telegram, Instagram, Meet, Discord, Signal
+          or the dialer, incoming AirWhispers messages can be spoken *quietly* to you
+          through your speaker, wired earphones or Bluetooth earbuds. You never have to
+          look at the phone.
+
+          **No login.** No account, no email, no password, no phone number. The server
+          hands this phone a random six-character code, and that code is your address.
+          Older releases on this page shipped the retired login-based build — install
+          **this** one (it is the newest).
+
+          ### Install
+          1. Download `app-standalone-release.apk` (signed) below. This is the app.
+          2. On the phone, allow "Install unknown apps" for your browser/file manager.
+          3. Open the app, type the address of an AirWhispers server, then your name.
+             There is **no account, no email, no password**: the server hands this phone a
+             six-character code, and that code is your address from then on.
+          4. Tap the code to copy it and send it to your friend; type their code under
+             ✏️ to open the chat. In the chat header, switch the mute icon to
+             **🔊 whispers on** so their messages may be spoken on this phone.
+          5. Call Assist → **Start listening**. While you are on a call in WhatsApp,
+             Telegram, Meet, Discord or the dialer, messages from people you allow are
+             spoken *quietly* (Whisper mode, on by default) through your earbuds,
+             headset or speaker.
+
+          ### Notes
+          * `app-standalone-release.apk` — recommended. No Google/Firebase account needed;
+            messages arrive over the app's own realtime channel while Call Assist is armed.
+          * `app-standalone-debug.apk` — same code with debug logging, for troubleshooting.
+          * Verify the download with the matching `.sha256` file.
+          * AirWhispers never records calls, never opens the microphone and never touches
+            another app's call audio. It speaks to *you*, the person holding this phone.
+          * **Whisper mode** (Settings → Speech, on by default) keeps the voice low so it is
+            meant for earbuds or the phone at your ear, not for the room.
+          * Automatic call detection is a documented heuristic — see
+            `docs/android-limitations.md`. The manual "Start listening" switch always works.
+          * The server is not included: run your own with `cd backend && npm ci && npm run dev`,
+            or ask whoever gave you the address. See `docs/quickstart.md`.
+
+          ### iOS
+          Android ships today. iOS shares the same backend and protocol; see
+          `docs/ios.md` for the build path (a Mac or Codemagic runner is required by Apple).
+          NOTES
+          echo "" >> notes.md
+          echo "Commit: \`$GITHUB_SHA\`" >> notes.md
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          INPUT_VERSION: ${{ inputs.version_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="${INPUT_TAG:-android-v${INPUT_VERSION:-1.0.0}}"
+          fi
+          echo "Releasing as $TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" apks/*.apk apks/*.sha256 --clobber
+          else
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "AirWhispers Android $TAG" \
+              --notes-file notes.md \
+              apks/*.apk apks/*.sha256
+          fi
+          gh release view "$TAG" --json url,assets --jq '"release: \(.url)", (.assets[] | "asset: \(.name) (\(.size) bytes)")'

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns the real theming; this only styles the window before the
+         first frame (and Android 12+ splash screens). -->
+    <style name="Theme.AirWhispers" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/brand_background</item>
+        <item name="android:colorBackground">@color/brand_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
