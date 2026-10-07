@@ -13,11 +13,12 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Token storage backed by an AES/GCM key that lives in the Android Keystore.
+ * Storage for the two secrets this app owns, backed by an AES/GCM key that lives
+ * in the Android Keystore.
  *
- * Auth tokens are never written to plain SharedPreferences and never leave the
- * device in cleartext. Keys are non-exportable and hardware-backed where the
- * device supports it.
+ * Neither the access token nor the device secret is ever written to plain
+ * SharedPreferences or leaves the device in cleartext. Keystore keys are
+ * non-exportable and hardware-backed where the device supports it.
  */
 class SecretStore(context: Context) {
 
@@ -27,8 +28,13 @@ class SecretStore(context: Context) {
     fun putAccessToken(token: String?) = put(KEY_ACCESS, token)
     fun accessToken(): String? = get(KEY_ACCESS)
 
-    fun putRefreshToken(token: String?) = put(KEY_REFRESH, token)
-    fun refreshToken(): String? = get(KEY_REFRESH)
+    /**
+     * The secret this device was given when its identity was created. It is the
+     * whole "login": the app exchanges it for a fresh access token whenever one
+     * expires, with no user interaction at all.
+     */
+    fun putDeviceSecret(secret: String?) = put(KEY_DEVICE_SECRET, secret)
+    fun deviceSecret(): String? = get(KEY_DEVICE_SECRET)
 
     fun putUserId(id: String?) = put(KEY_USER_ID, id)
     fun userId(): String? = get(KEY_USER_ID)
@@ -36,7 +42,7 @@ class SecretStore(context: Context) {
     fun clearSession() {
         prefs.edit()
             .remove(KEY_ACCESS)
-            .remove(KEY_REFRESH)
+            .remove(KEY_DEVICE_SECRET)
             .remove(KEY_USER_ID)
             .apply()
     }
@@ -107,7 +113,7 @@ class SecretStore(context: Context) {
         const val IV_BYTES = 12
         const val TAG_BITS = 128
         const val KEY_ACCESS = "access_token"
-        const val KEY_REFRESH = "refresh_token"
+        const val KEY_DEVICE_SECRET = "device_secret"
         const val KEY_USER_ID = "user_id"
     }
 }

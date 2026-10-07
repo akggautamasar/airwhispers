@@ -2,21 +2,31 @@ package com.airwhispers.data.model
 
 /** Pure Kotlin domain models — no Android types, so they are unit-testable. */
 
-data class Account(
+/**
+ * This device's identity on a server.
+ *
+ * There is no account, no email and no password: the first time the app reaches a
+ * server it is handed a random six-character [code], which is the only thing a
+ * friend needs in order to whisper to this phone.
+ */
+data class Identity(
     val id: String,
-    val email: String,
+    val code: String,
     val displayName: String,
-    val handle: String?,
     val createdAt: Long,
-)
+) {
+    /** `k7m2pq` → `K7M 2PQ`: easier to read out loud. */
+    val prettyCode: String
+        get() = code.uppercase().replace(Regex("(.{3})(.{3})"), "$1 $2")
+}
 
-data class Contact(
+/** Someone this device can talk to, addressed by their code. */
+data class Peer(
     val id: String,
-    val userId: String,
+    val code: String,
     val displayName: String,
-    val email: String,
-    /** Allowed to trigger automatic speech on this device. */
-    val isTrusted: Boolean,
+    /** This device lets their messages be whispered during a call. */
+    val allowsSpeak: Boolean,
     val conversationId: String?,
 )
 
@@ -24,7 +34,7 @@ enum class MessageState { PENDING, SENT, FAILED }
 
 enum class DeliveryState { NONE, DELIVERED, READ }
 
-/** Priority is set by the *sender* (the "Speak Now" affordance). */
+/** Priority is set by the *sender* (the "Whisper now" affordance). */
 enum class MessagePriority { NORMAL, SPEAK_NOW }
 
 data class Message(
@@ -43,6 +53,10 @@ data class Message(
     val isMine: Boolean,
     /** Wall-clock time this device finished speaking the message, if it did. */
     val spokenAt: Long? = null,
+    /** The recipient's phone reported that it spoke this message. */
+    val spokenByRecipient: Boolean = false,
+    /** The recipient currently allows this sender to whisper to them. */
+    val speakEligible: Boolean = false,
     /** Local failure reason, shown in the transcript bubble. */
     val failureReason: String? = null,
 )
@@ -50,12 +64,17 @@ data class Message(
 data class Conversation(
     val id: String,
     val peerId: String,
+    val peerCode: String,
     val peerDisplayName: String,
-    val peerEmail: String,
+    /** Live presence from the realtime socket (false when unknown/offline). */
+    val peerOnline: Boolean = false,
     val lastMessageText: String?,
     val lastMessageAt: Long?,
     val unreadCount: Int,
-    val peerTrusted: Boolean,
+    /** I let this peer's messages be spoken on this device. */
+    val youAllowSpeak: Boolean,
+    /** They let my messages be spoken on their device. */
+    val peerAllowsSpeak: Boolean,
 )
 
 /** What the phone is doing right now. */
@@ -111,13 +130,15 @@ data class SpeechSettings(
     val output: SpeechOutput = SpeechOutput.SYSTEM_DEFAULT,
     val emojiMode: EmojiMode = EmojiMode.DESCRIBE_IMPORTANT,
     val pauseBetweenMessagesMs: Long = 700L,
-    val whisperMode: Boolean = false,
+    /** Speak more quietly: meant for earbuds on a call, not for the room. */
+    val whisperMode: Boolean = true,
 )
 
 data class CallAssistSettings(
     val enabled: Boolean = false,
     val speakMessages: Boolean = false,
     val onlyDuringCalls: Boolean = true,
+    /** When on, only people the user explicitly allowed may be spoken. */
     val trustedContactsOnly: Boolean = true,
     val preferBluetooth: Boolean = true,
     val speakOwnMessages: Boolean = false,

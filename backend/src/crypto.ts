@@ -2,6 +2,7 @@ import {
   createHash,
   createHmac,
   randomBytes,
+  randomInt,
   randomUUID,
   scrypt as scryptCallback,
   timingSafeEqual,
@@ -9,6 +10,7 @@ import {
   type ScryptOptions,
 } from "node:crypto";
 import { promisify } from "node:util";
+import { CODE_ALPHABET, CODE_LENGTH } from "./types.js";
 
 /** node:util promisify does not carry the options overload, so type it here. */
 const scrypt = promisify(scryptCallback) as (
@@ -22,34 +24,69 @@ const scrypt = promisify(scryptCallback) as (
  * Security primitives, deliberately implemented on node:crypto so the backend has
  * no native build dependencies.
  *
- *  - Passwords: scrypt with a per-user random salt (memory-hard, stdlib).
- *  - Access tokens: HS256 JWT, short lived.
- *  - Refresh tokens: opaque 256-bit random values, stored only as SHA-256 hashes,
- *    rotated on every use.
+ *  - Device secrets: scrypt with a per-credential random salt (memory-hard, stdlib).
+ *  - Access tokens: HS256 JWT, short lived, refreshed silently via the device secret.
+ *  - Codes: short random identifiers from an unambiguous alphabet (no 0/o/1/l/i).
  *  - FCM OAuth: RS256 assertion signed with the service-account key.
+ *
+ * There are no passwords anywhere in this product — a device either holds its
+ * secret or it is a brand new identity.
  */
 
 const SCRYPT_KEYLEN = 64;
-const SCRYPT_COST = 16384;
+// Device secrets are 256-bit random values, not human passwords: a *modest*
+// scrypt cost keeps silent re-authentication snappy while still making an
+// offline attack on a leaked credential database pointless.
+const SCRYPT_COST = 4096;
 
-export async function hashPassword(password: string): Promise<string> {
+export async function hashSecret(secret: string): Promise<string> {
   const salt = randomBytes(16);
-  const derived = await scrypt(password.normalize("NFKC"), salt, SCRYPT_KEYLEN, {
+  const derived = await scrypt(secret.normalize("NFKC"), salt, SCRYPT_KEYLEN, {
     N: SCRYPT_COST,
   });
   return `scrypt$${SCRYPT_COST}$${salt.toString("base64url")}$${derived.toString("base64url")}`;
 }
 
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+export async function verifySecret(secret: string, stored: string): Promise<boolean> {
   const parts = stored.split("$");
   if (parts.length !== 4 || parts[0] !== "scrypt") return false;
   const cost = Number(parts[1]);
   const salt = Buffer.from(parts[2]!, "base64url");
   const expected = Buffer.from(parts[3]!, "base64url");
-  const derived = await scrypt(password.normalize("NFKC"), salt, expected.length, {
+  const derived = await scrypt(secret.normalize("NFKC"), salt, expected.length, {
     N: cost,
   });
   return derived.length === expected.length && timingSafeEqual(derived, expected);
+}
+
+// ----------------------------------------------------------------- device codes
+
+/**
+ * A code is the user's whole address book entry: 6 characters, read out loud.
+ *
+ * 32^6 ≈ 1.07 billion combinations, and registration is rate limited, so codes
+ * are not feasibly enumerable. They are stored and compared lowercase; the app
+ * may display them uppercase, with or without a dash.
+ */
+export function newCode(): string {
+  let code = "";
+  for (let i = 0; i < CODE_LENGTH; i++) {
+    code += CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+/**
+ * 256-bit device secret: proves this installation already owns an identity.
+ * Stored only as an scrypt hash (see [hashSecret]).
+ */
+export function newDeviceSecret(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+/** Accepts `k7m2pq`, `K7M-2PQ`, ` k7 m2 pq ` — whatever a human types. */
+export function normaliseCode(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 // --------------------------------------------------------------------- JWT (HS256)
@@ -95,13 +132,6 @@ export function verifyAccessToken(token: string, secret: string): AccessTokenCla
   } catch {
     return null;
   }
-}
-
-// -------------------------------------------------------------- refresh tokens
-
-export function newRefreshToken(): { token: string; hash: string } {
-  const token = randomBytes(32).toString("base64url");
-  return { token, hash: sha256(token) };
 }
 
 export function sha256(value: string): string {

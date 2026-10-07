@@ -1,17 +1,14 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { randomUUID } from "node:crypto";
 import {
-  DEFAULT_SETTINGS,
-  type Contact,
   type Conversation,
   type Device,
+  type DeviceCredential,
   type InsertMessageResult,
   type Message,
-  type RefreshTokenRecord,
   type Store,
+  type Trust,
   type User,
-  type UserSettings,
-  type UserWithSecret,
 } from "./types.js";
 
 /**
@@ -47,24 +44,23 @@ export class PgStore implements Store {
     }
   }
 
-  async createUser(input: {
-    email: string;
-    displayName: string;
-    passwordHash: string;
-    handle?: string | null;
-  }): Promise<User> {
-    const rows = await this.q<UserRow>(
-      `INSERT INTO users (id, email, display_name, handle, password_hash, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [randomUUID(), input.email.toLowerCase(), input.displayName, input.handle ?? null, input.passwordHash, Date.now()],
-    );
-    return toUser(rows[0]!);
+  async createUser(input: { code: string; displayName: string }): Promise<User> {
+    try {
+      const rows = await this.q<UserRow>(
+        `INSERT INTO users (id, code, display_name, created_at)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [randomUUID(), input.code.toLowerCase(), input.displayName, Date.now()],
+      );
+      return toUser(rows[0]!);
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new Error("code_taken");
+      throw error;
+    }
   }
 
-  async findUserByEmail(email: string): Promise<UserWithSecret | null> {
-    const rows = await this.q<UserRow>(`SELECT * FROM users WHERE email = $1`, [email.toLowerCase()]);
-    const row = rows[0];
-    return row ? { ...toUser(row), passwordHash: row.password_hash } : null;
+  async findUserByCode(code: string): Promise<User | null> {
+    const rows = await this.q<UserRow>(`SELECT * FROM users WHERE code = $1`, [code.toLowerCase()]);
+    return rows[0] ? toUser(rows[0]) : null;
   }
 
   async findUserById(id: string): Promise<User | null> {
@@ -81,76 +77,89 @@ export class PgStore implements Store {
     return toUser(rows[0]);
   }
 
-  async saveRefreshToken(record: RefreshTokenRecord): Promise<void> {
+  async countUsers(): Promise<number> {
+    const rows = await this.q<{ count: string }>(`SELECT count(*)::text AS count FROM users`);
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async saveCredential(credential: DeviceCredential): Promise<void> {
     await this.q(
-      `INSERT INTO refresh_tokens (token_hash, user_id, device_id, expires_at, revoked_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [record.tokenHash, record.userId, record.deviceId, record.expiresAt, record.revokedAt],
+      `INSERT INTO device_credentials
+         (device_id, user_id, secret_hash, platform, app_version, created_at, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (device_id, user_id) DO UPDATE SET
+         secret_hash = EXCLUDED.secret_hash,
+         platform = EXCLUDED.platform,
+         app_version = EXCLUDED.app_version,
+         last_seen_at = EXCLUDED.last_seen_at`,
+      [
+        credential.deviceId,
+        credential.userId,
+        credential.secretHash,
+        credential.platform,
+        credential.appVersion,
+        credential.createdAt,
+        credential.lastSeenAt,
+      ],
     );
   }
 
-  async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {
-    const rows = await this.q<RefreshRow>(`SELECT * FROM refresh_tokens WHERE token_hash = $1`, [tokenHash]);
-    const row = rows[0];
-    return row
-      ? {
-          tokenHash: row.token_hash,
-          userId: row.user_id,
-          deviceId: row.device_id,
-          expiresAt: Number(row.expires_at),
-          revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
-        }
-      : null;
+  async credentialsForDevice(deviceId: string): Promise<DeviceCredential[]> {
+    const rows = await this.q<CredentialRow>(`SELECT * FROM device_credentials WHERE device_id = $1`, [deviceId]);
+    return rows.map(toCredential);
   }
 
-  async revokeRefreshToken(tokenHash: string, at: number): Promise<void> {
-    await this.q(`UPDATE refresh_tokens SET revoked_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL`, [tokenHash, at]);
+  async touchCredential(deviceId: string, userId: string, at: number): Promise<void> {
+    await this.q(
+      `UPDATE device_credentials SET last_seen_at = $3 WHERE device_id = $1 AND user_id = $2`,
+      [deviceId, userId, at],
+    );
   }
 
-  async revokeAllRefreshTokens(userId: string): Promise<void> {
-    await this.q(`UPDATE refresh_tokens SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`, [userId, Date.now()]);
-  }
-
-  private pairKey(a: string, b: string): string {
-    return [a, b].sort().join(":");
+  async revokeCredential(deviceId: string, userId: string): Promise<void> {
+    await this.q(`DELETE FROM device_credentials WHERE device_id = $1 AND user_id = $2`, [deviceId, userId]);
   }
 
   async getOrCreateConversation(a: string, b: string): Promise<Conversation> {
-    const key = this.pairKey(a, b);
-    const existing = await this.q<ConversationRow>(`SELECT * FROM conversations WHERE pair_key = $1`, [key]);
-    if (existing[0]) return await this.hydrateConversation(existing[0]);
-    try {
-      const created = await this.tx(async (client) => {
-        const row = await client.query<ConversationRow>(
-          `INSERT INTO conversations (id, pair_key, created_at) VALUES ($1, $2, $3) RETURNING *`,
-          [randomUUID(), key, Date.now()],
-        );
-        const conversationId = row.rows[0]!.id;
-        await client.query(
-          `INSERT INTO conversation_members (conversation_id, user_id) VALUES ($1, $2), ($1, $3)`,
-          [conversationId, a, b],
-        );
-        return row.rows[0]!;
-      });
-      return await this.hydrateConversation(created);
-    } catch {
-      // Lost a race: another request created it first.
-      const rows = await this.q<ConversationRow>(`SELECT * FROM conversations WHERE pair_key = $1`, [key]);
-      return await this.hydrateConversation(rows[0]!);
-    }
-  }
+    const [first, second] = [a, b].sort();
+    const pairKey = `${first}:${second}`;
 
-  private async hydrateConversation(row: ConversationRow): Promise<Conversation> {
-    const members = await this.q<{ user_id: string }>(
-      `SELECT user_id FROM conversation_members WHERE conversation_id = $1`,
-      [row.id],
-    );
-    return { id: row.id, createdAt: Number(row.created_at), memberIds: members.map((m) => m.user_id) };
+    const existing = await this.q<ConversationRow>(`SELECT * FROM conversations WHERE pair_key = $1`, [pairKey]);
+    if (existing[0]) {
+      return { id: existing[0].id, createdAt: Number(existing[0].created_at), memberIds: [first!, second!] };
+    }
+
+    return await this.tx(async (client) => {
+      const inserted = await client.query<ConversationRow>(
+        `INSERT INTO conversations (id, pair_key, created_at) VALUES ($1, $2, $3)
+         ON CONFLICT (pair_key) DO UPDATE SET pair_key = EXCLUDED.pair_key
+         RETURNING *`,
+        [randomUUID(), pairKey, Date.now()],
+      );
+      const conversation = inserted.rows[0]!;
+      for (const member of [first!, second!]) {
+        await client.query(
+          `INSERT INTO conversation_members (conversation_id, user_id) VALUES ($1, $2)
+           ON CONFLICT DO NOTHING`,
+          [conversation.id, member],
+        );
+      }
+      return { id: conversation.id, createdAt: Number(conversation.created_at), memberIds: [first!, second!] };
+    });
   }
 
   async findConversation(id: string): Promise<Conversation | null> {
     const rows = await this.q<ConversationRow>(`SELECT * FROM conversations WHERE id = $1`, [id]);
-    return rows[0] ? await this.hydrateConversation(rows[0]) : null;
+    if (!rows[0]) return null;
+    const members = await this.q<{ user_id: string }>(
+      `SELECT user_id FROM conversation_members WHERE conversation_id = $1`,
+      [id],
+    );
+    return {
+      id: rows[0].id,
+      createdAt: Number(rows[0].created_at),
+      memberIds: members.map((m) => m.user_id),
+    };
   }
 
   async listConversations(userId: string): Promise<Conversation[]> {
@@ -161,36 +170,63 @@ export class PgStore implements Store {
       [userId],
     );
     const out: Conversation[] = [];
-    for (const row of rows) out.push(await this.hydrateConversation(row));
+    for (const row of rows) {
+      const conversation = await this.findConversation(row.id);
+      if (conversation) out.push(conversation);
+    }
     return out;
   }
 
-  async insertMessage(message: Message): Promise<InsertMessageResult> {
-    const rows = await this.q<MessageRow>(
-      `INSERT INTO messages (id, client_message_id, conversation_id, sender_id, recipient_id, text, priority, created_at, delivered_at, read_at, spoken_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       ON CONFLICT (sender_id, client_message_id) DO NOTHING
-       RETURNING *`,
-      [
-        message.id,
-        message.clientMessageId,
-        message.conversationId,
-        message.senderId,
-        message.recipientId,
-        message.text,
-        message.priority,
-        message.createdAt,
-        message.deliveredAt,
-        message.readAt,
-        message.spokenAt,
-      ],
+  async peerIdsOf(userId: string): Promise<string[]> {
+    const rows = await this.q<{ user_id: string }>(
+      `SELECT DISTINCT other.user_id
+       FROM conversation_members mine
+       JOIN conversation_members other ON other.conversation_id = mine.conversation_id
+       WHERE mine.user_id = $1 AND other.user_id <> $1`,
+      [userId],
     );
-    if (rows[0]) return { message: toMessage(rows[0]), created: true };
+    return rows.map((row) => row.user_id);
+  }
+
+  async insertMessage(message: Message): Promise<InsertMessageResult> {
     const existing = await this.q<MessageRow>(
       `SELECT * FROM messages WHERE sender_id = $1 AND client_message_id = $2`,
       [message.senderId, message.clientMessageId],
     );
-    return { message: toMessage(existing[0]!), created: false };
+    if (existing[0]) return { message: toMessage(existing[0]), created: false };
+
+    try {
+      const rows = await this.q<MessageRow>(
+        `INSERT INTO messages
+           (id, client_message_id, conversation_id, sender_id, recipient_id, text, priority,
+            created_at, delivered_at, read_at, spoken_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (sender_id, client_message_id) DO NOTHING
+         RETURNING *`,
+        [
+          message.id,
+          message.clientMessageId,
+          message.conversationId,
+          message.senderId,
+          message.recipientId,
+          message.text,
+          message.priority,
+          message.createdAt,
+          message.deliveredAt,
+          message.readAt,
+          message.spokenAt,
+        ],
+      );
+      if (rows[0]) return { message: toMessage(rows[0]), created: true };
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+    }
+    // Lost a race: the other writer's row wins.
+    const rows = await this.q<MessageRow>(
+      `SELECT * FROM messages WHERE sender_id = $1 AND client_message_id = $2`,
+      [message.senderId, message.clientMessageId],
+    );
+    return { message: toMessage(rows[0]!), created: false };
   }
 
   async findMessage(id: string): Promise<Message | null> {
@@ -223,16 +259,17 @@ export class PgStore implements Store {
 
   async unreadCount(conversationId: string, userId: string): Promise<number> {
     const rows = await this.q<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM messages
+      `SELECT count(*)::text AS count FROM messages
        WHERE conversation_id = $1 AND recipient_id = $2 AND read_at IS NULL`,
       [conversationId, userId],
     );
-    return Number(rows[0]?.count ?? "0");
+    return Number(rows[0]?.count ?? 0);
   }
 
   async markConversationRead(conversationId: string, userId: string, at: number): Promise<Message[]> {
     const rows = await this.q<MessageRow>(
-      `UPDATE messages SET read_at = $3, delivered_at = COALESCE(delivered_at, $3)
+      `UPDATE messages
+         SET read_at = $3, delivered_at = COALESCE(delivered_at, $3)
        WHERE conversation_id = $1 AND recipient_id = $2 AND read_at IS NULL
        RETURNING *`,
       [conversationId, userId, at],
@@ -245,103 +282,37 @@ export class PgStore implements Store {
   }
 
   async markMessageSpoken(messageId: string, at: number): Promise<void> {
-    await this.q(
-      `UPDATE messages SET spoken_at = $2, delivered_at = COALESCE(delivered_at, $2) WHERE id = $1`,
-      [messageId, at],
-    );
-  }
-
-  async addContact(ownerUserId: string, contactUserId: string, isTrusted: boolean): Promise<Contact> {
-    const rows = await this.q<ContactRow>(
-      `INSERT INTO contacts (owner_user_id, contact_user_id, is_trusted, created_at)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (owner_user_id, contact_user_id)
-       DO UPDATE SET is_trusted = EXCLUDED.is_trusted
-       RETURNING *`,
-      [ownerUserId, contactUserId, isTrusted, Date.now()],
-    );
-    return toContact(rows[0]!);
-  }
-
-  async listContacts(ownerUserId: string): Promise<Contact[]> {
-    const rows = await this.q<ContactRow>(
-      `SELECT * FROM contacts WHERE owner_user_id = $1 ORDER BY created_at ASC`,
-      [ownerUserId],
-    );
-    return rows.map(toContact);
-  }
-
-  async findContact(ownerUserId: string, contactUserId: string): Promise<Contact | null> {
-    const rows = await this.q<ContactRow>(
-      `SELECT * FROM contacts WHERE owner_user_id = $1 AND contact_user_id = $2`,
-      [ownerUserId, contactUserId],
-    );
-    return rows[0] ? toContact(rows[0]) : null;
-  }
-
-  async updateContact(
-    ownerUserId: string,
-    contactUserId: string,
-    patch: { isTrusted?: boolean },
-  ): Promise<Contact | null> {
-    const rows = await this.q<ContactRow>(
-      `UPDATE contacts SET is_trusted = COALESCE($3, is_trusted)
-       WHERE owner_user_id = $1 AND contact_user_id = $2 RETURNING *`,
-      [ownerUserId, contactUserId, patch.isTrusted ?? null],
-    );
-    return rows[0] ? toContact(rows[0]) : null;
-  }
-
-  async deleteContact(ownerUserId: string, contactUserId: string): Promise<void> {
-    await this.q(`DELETE FROM contacts WHERE owner_user_id = $1 AND contact_user_id = $2`, [
-      ownerUserId,
-      contactUserId,
+    await this.q(`UPDATE messages SET spoken_at = $2, delivered_at = COALESCE(delivered_at, $2) WHERE id = $1`, [
+      messageId,
+      at,
     ]);
   }
 
-  async getSettings(userId: string): Promise<UserSettings> {
-    const rows = await this.q<SettingsRow>(`SELECT * FROM user_settings WHERE user_id = $1`, [userId]);
-    if (rows[0]) return toSettings(rows[0]);
-    return await this.updateSettings(userId, {});
+  async setTrust(ownerUserId: string, peerUserId: string, trusted: boolean): Promise<Trust> {
+    const now = Date.now();
+    const rows = await this.q<TrustRow>(
+      `INSERT INTO trusts (owner_user_id, peer_user_id, trusted, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $4)
+       ON CONFLICT (owner_user_id, peer_user_id) DO UPDATE
+         SET trusted = EXCLUDED.trusted, updated_at = EXCLUDED.updated_at
+       RETURNING *`,
+      [ownerUserId, peerUserId, trusted, now],
+    );
+    return toTrust(rows[0]!);
   }
 
-  async updateSettings(userId: string, patch: Partial<Omit<UserSettings, "userId">>): Promise<UserSettings> {
-    const current = (await this.q<SettingsRow>(`SELECT * FROM user_settings WHERE user_id = $1`, [userId]))[0];
-    const base = current
-      ? toSettings(current)
-      : ({ userId, ...DEFAULT_SETTINGS } as UserSettings);
-    const next: UserSettings = { ...base, ...patch, userId };
-    await this.q(
-      `INSERT INTO user_settings (user_id, speak_messages, only_during_calls, trusted_contacts_only, prefer_bluetooth, language_tag, speech_rate, pitch, emoji_mode)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (user_id) DO UPDATE SET
-         speak_messages = EXCLUDED.speak_messages,
-         only_during_calls = EXCLUDED.only_during_calls,
-         trusted_contacts_only = EXCLUDED.trusted_contacts_only,
-         prefer_bluetooth = EXCLUDED.prefer_bluetooth,
-         language_tag = EXCLUDED.language_tag,
-         speech_rate = EXCLUDED.speech_rate,
-         pitch = EXCLUDED.pitch,
-         emoji_mode = EXCLUDED.emoji_mode`,
-      [
-        next.userId,
-        next.speakMessages,
-        next.onlyDuringCalls,
-        next.trustedContactsOnly,
-        next.preferBluetooth,
-        next.languageTag,
-        next.speechRate,
-        next.pitch,
-        next.emojiMode,
-      ],
+  async findTrust(ownerUserId: string, peerUserId: string): Promise<Trust | null> {
+    const rows = await this.q<TrustRow>(
+      `SELECT * FROM trusts WHERE owner_user_id = $1 AND peer_user_id = $2`,
+      [ownerUserId, peerUserId],
     );
-    return next;
+    return rows[0] ? toTrust(rows[0]) : null;
   }
 
   async upsertDevice(device: Device): Promise<void> {
     await this.q(
       `INSERT INTO devices (device_id, user_id, platform, push_token, app_version, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (device_id) DO UPDATE SET
          user_id = EXCLUDED.user_id,
          platform = EXCLUDED.platform,
@@ -362,14 +333,7 @@ export class PgStore implements Store {
       `SELECT * FROM devices WHERE user_id = ANY($1::uuid[]) AND push_token IS NOT NULL`,
       [userIds],
     );
-    return rows.map((row) => ({
-      deviceId: row.device_id,
-      userId: row.user_id,
-      platform: row.platform,
-      pushToken: row.push_token,
-      appVersion: row.app_version,
-      updatedAt: Number(row.updated_at),
-    }));
+    return rows.map(toDevice);
   }
 
   async close(): Promise<void> {
@@ -377,20 +341,24 @@ export class PgStore implements Store {
   }
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: string }).code === "23505";
+}
+
 interface UserRow extends QueryResultRow {
   id: string;
-  email: string;
+  code: string;
   display_name: string;
-  handle: string | null;
-  password_hash: string;
   created_at: string | number;
 }
-interface RefreshRow extends QueryResultRow {
-  token_hash: string;
+interface CredentialRow extends QueryResultRow {
+  device_id: string;
   user_id: string;
-  device_id: string | null;
-  expires_at: string | number;
-  revoked_at: string | number | null;
+  secret_hash: string;
+  platform: string;
+  app_version: string | null;
+  created_at: string | number;
+  last_seen_at: string | number;
 }
 interface ConversationRow extends QueryResultRow {
   id: string;
@@ -410,22 +378,12 @@ interface MessageRow extends QueryResultRow {
   read_at: string | number | null;
   spoken_at: string | number | null;
 }
-interface ContactRow extends QueryResultRow {
+interface TrustRow extends QueryResultRow {
   owner_user_id: string;
-  contact_user_id: string;
-  is_trusted: boolean;
+  peer_user_id: string;
+  trusted: boolean;
   created_at: string | number;
-}
-interface SettingsRow extends QueryResultRow {
-  user_id: string;
-  speak_messages: boolean;
-  only_during_calls: boolean;
-  trusted_contacts_only: boolean;
-  prefer_bluetooth: boolean;
-  language_tag: string;
-  speech_rate: number;
-  pitch: number;
-  emoji_mode: string;
+  updated_at: string | number;
 }
 interface DeviceRow extends QueryResultRow {
   device_id: string;
@@ -439,10 +397,21 @@ interface DeviceRow extends QueryResultRow {
 function toUser(row: UserRow): User {
   return {
     id: row.id,
-    email: row.email,
+    code: row.code,
     displayName: row.display_name,
-    handle: row.handle,
     createdAt: Number(row.created_at),
+  };
+}
+
+function toCredential(row: CredentialRow): DeviceCredential {
+  return {
+    deviceId: row.device_id,
+    userId: row.user_id,
+    secretHash: row.secret_hash,
+    platform: row.platform,
+    appVersion: row.app_version,
+    createdAt: Number(row.created_at),
+    lastSeenAt: Number(row.last_seen_at),
   };
 }
 
@@ -462,25 +431,23 @@ function toMessage(row: MessageRow): Message {
   };
 }
 
-function toContact(row: ContactRow): Contact {
+function toTrust(row: TrustRow): Trust {
   return {
     ownerUserId: row.owner_user_id,
-    contactUserId: row.contact_user_id,
-    isTrusted: row.is_trusted,
+    peerUserId: row.peer_user_id,
+    trusted: row.trusted,
     createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
   };
 }
 
-function toSettings(row: SettingsRow): UserSettings {
+function toDevice(row: DeviceRow): Device {
   return {
+    deviceId: row.device_id,
     userId: row.user_id,
-    speakMessages: row.speak_messages,
-    onlyDuringCalls: row.only_during_calls,
-    trustedContactsOnly: row.trusted_contacts_only,
-    preferBluetooth: row.prefer_bluetooth,
-    languageTag: row.language_tag,
-    speechRate: Number(row.speech_rate),
-    pitch: Number(row.pitch),
-    emojiMode: (row.emoji_mode as UserSettings["emojiMode"]) ?? "DESCRIBE_IMPORTANT",
+    platform: row.platform,
+    pushToken: row.push_token,
+    appVersion: row.app_version,
+    updatedAt: Number(row.updated_at),
   };
 }

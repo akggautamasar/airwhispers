@@ -1,6 +1,5 @@
 package com.airwhispers.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,18 +37,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.airwhispers.data.model.Conversation
 import com.airwhispers.data.model.DeliveryState
 import com.airwhispers.data.model.Message
 import com.airwhispers.data.model.MessagePriority
 import com.airwhispers.data.model.MessageState
 import com.airwhispers.ui.AppViewModel
 
+/** How often this device tells the other side "still typing". */
+private const val TYPING_PING_MS = 2_500L
+
 /**
- * 1-to-1 conversation.
+ * 1-to-1 chat, addressed by code.
  *
- * Send is the ordinary path; **Speak Now** marks a message so a recipient with
- * Call Assist hears it as soon as their queue allows — the "important, listen
- * now" channel of the product.
+ * Send is the ordinary path; **Whisper now** asks the other phone's Call Assist to
+ * speak the message the moment it is allowed to — the "important, listen now"
+ * channel of the product. Whether it is actually spoken is decided *there*, by the
+ * person holding that phone: the header switch shows their answer.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,10 +65,13 @@ fun ChatScreen(
     val conversations by viewModel.conversations.collectAsState()
     val allMessages by viewModel.messages.collectAsState()
     val queue by viewModel.queue.collectAsState()
+    val typing by viewModel.typing.collectAsState()
     val conversation = conversations.firstOrNull { it.id == conversationId }
     val messages = allMessages[conversationId].orEmpty()
+    val peerTyping = typing?.conversationId == conversationId
 
     var draft by remember { mutableStateOf("") }
+    var lastTypingPing by remember { mutableLongStateOf(0L) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(conversationId) {
@@ -79,13 +87,9 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(conversation?.peerDisplayName ?: "Conversation")
+                        Text(conversation?.peerDisplayName ?: "Chat")
                         Text(
-                            if (conversation?.peerTrusted == true) {
-                                "Trusted for Call Assist"
-                            } else {
-                                "Not spoken aloud on this device"
-                            },
+                            subtitleFor(conversation, peerTyping),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -95,12 +99,12 @@ fun ChatScreen(
                 actions = {
                     conversation?.let { c ->
                         TextButton(
-                            onClick = {
-                                val contact = viewModel.contacts.value.firstOrNull { it.userId == c.peerId }
-                                if (contact != null) viewModel.setTrusted(contact, !c.peerTrusted)
-                            },
+                            onClick = { viewModel.setSpeakAllowed(c, !c.youAllowSpeak) },
                         ) {
-                            Text(if (c.peerTrusted) "🔊" else "🔇")
+                            Text(
+                                if (c.youAllowSpeak) "🔊 whispers on" else "🔇 muted",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
                         }
                     }
                 },
@@ -111,9 +115,17 @@ fun ChatScreen(
                 Column(Modifier.navigationBarsPadding().imePadding()) {
                     if (queue.current?.conversationId == conversationId) {
                         Text(
-                            "Speaking now…",
+                            "Whispering now…",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+                        )
+                    }
+                    if (draft.isNotBlank() && conversation?.peerAllowsSpeak == false) {
+                        Text(
+                            "They have not allowed whispers from you yet — “Whisper now” will arrive as a normal message.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
                         )
                     }
@@ -125,7 +137,14 @@ fun ChatScreen(
                     ) {
                         OutlinedTextField(
                             value = draft,
-                            onValueChange = { draft = it },
+                            onValueChange = { value ->
+                                draft = value
+                                val now = System.currentTimeMillis()
+                                if (value.isNotBlank() && now - lastTypingPing > TYPING_PING_MS) {
+                                    lastTypingPing = now
+                                    viewModel.notifyTyping(conversationId)
+                                }
+                            },
                             placeholder = { Text("Message") },
                             maxLines = 5,
                             modifier = Modifier.weight(1f),
@@ -138,7 +157,7 @@ fun ChatScreen(
                                     draft = ""
                                 },
                                 enabled = draft.isNotBlank(),
-                            ) { Text("🔊 Speak Now", style = MaterialTheme.typography.labelSmall) }
+                            ) { Text("🔊 Whisper", style = MaterialTheme.typography.labelSmall) }
                             TextButton(
                                 onClick = {
                                     viewModel.send(conversationId, draft, speakNow = false)
@@ -153,22 +172,44 @@ fun ChatScreen(
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(messages, key = { it.clientMessageId }) { message ->
-                    MessageBubble(
-                        message = message,
-                        onRetry = { viewModel.retry(message.clientMessageId) },
+            if (messages.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "Say something. If they are on a call, it can be whispered to them.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(32.dp),
                     )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(messages, key = { it.clientMessageId }) { message ->
+                        MessageBubble(
+                            message = message,
+                            onRetry = { viewModel.retry(message.clientMessageId) },
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+private fun subtitleFor(conversation: Conversation?, peerTyping: Boolean): String = when {
+    peerTyping -> "typing…"
+    conversation == null -> ""
+    conversation.peerOnline -> "code ${prettyCode(conversation.peerCode)} · online"
+    else -> "code ${prettyCode(conversation.peerCode)} · offline"
+}
+
+internal fun prettyCode(code: String): String =
+    code.uppercase().replace(Regex("(.{3})(.{3})"), "$1 $2")
 
 @Composable
 private fun MessageBubble(message: Message, onRetry: () -> Unit) {
@@ -192,7 +233,7 @@ private fun MessageBubble(message: Message, onRetry: () -> Unit) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 if (message.priority == MessagePriority.SPEAK_NOW) {
                     Text(
-                        "🔊 Speak Now",
+                        "🔊 Whisper now",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.secondary,
                     )
@@ -218,7 +259,10 @@ private fun MessageBubble(message: Message, onRetry: () -> Unit) {
 private fun buildStatusLabel(message: Message): String {
     val time = formatTimestamp(message.createdAt)
     return when {
-        !message.isMine -> listOfNotNull(time, message.spokenAt?.let { "read aloud" }).joinToString(" · ")
+        !message.isMine -> listOfNotNull(
+            time,
+            if (message.spokenAt != null || message.spokenByRecipient) "whispered" else null,
+        ).joinToString(" · ")
         message.state == MessageState.PENDING -> "$time · sending"
         message.state == MessageState.FAILED -> "$time · not sent"
         message.deliveryState == DeliveryState.READ -> "$time · read"

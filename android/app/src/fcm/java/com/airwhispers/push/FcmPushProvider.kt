@@ -34,7 +34,7 @@ class AirWhispersMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         AppLog.i("Fcm", "token_refreshed", "chars" to token.length)
         val container = AppContainer.peekOrNull() ?: return
-        container.appScope.launch { runCatching { container.repository.registerDevice() } }
+        container.appScope.launch { runCatching { container.repository.registerForPush() } }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {

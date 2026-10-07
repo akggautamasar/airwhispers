@@ -1,90 +1,93 @@
 import { randomUUID } from "node:crypto";
 import {
-  DEFAULT_SETTINGS,
-  type Contact,
   type Conversation,
   type Device,
+  type DeviceCredential,
   type InsertMessageResult,
   type Message,
-  type RefreshTokenRecord,
   type Store,
+  type Trust,
   type User,
-  type UserSettings,
-  type UserWithSecret,
 } from "./types.js";
 
 /**
  * In-memory store: used for `npm run dev` (zero infrastructure), for the test
  * suite, and for small self-hosted demos. Data lives as long as the process.
+ *
+ * Single-instance only — a restart means every device is issued a new code
+ * (production uses PostgreSQL, see store.pg.ts).
  */
 export class MemoryStore implements Store {
-  private users = new Map<string, UserWithSecret>();
-  private usersByEmail = new Map<string, string>();
-  private refreshTokens = new Map<string, RefreshTokenRecord>();
+  private users = new Map<string, User>();
+  private usersByCode = new Map<string, string>();
+  private credentials = new Map<string, DeviceCredential>();
   private conversations = new Map<string, Conversation>();
   private directIndex = new Map<string, string>();
   private messages = new Map<string, Message>();
-  private contacts = new Map<string, Contact>();
-  private settings = new Map<string, UserSettings>();
+  private trusts = new Map<string, Trust>();
   private devices = new Map<string, Device>();
 
   private directKey(a: string, b: string): string {
     return [a, b].sort().join("::");
   }
 
-  async createUser(input: {
-    email: string;
-    displayName: string;
-    passwordHash: string;
-    handle?: string | null;
-  }): Promise<User> {
-    const user: UserWithSecret = {
-      id: randomUUID(),
-      email: input.email.toLowerCase(),
-      displayName: input.displayName,
-      handle: input.handle ?? null,
-      createdAt: Date.now(),
-      passwordHash: input.passwordHash,
-    };
-    this.users.set(user.id, user);
-    this.usersByEmail.set(user.email, user.id);
-    return strip(user);
+  private credentialKey(deviceId: string, userId: string): string {
+    return `${deviceId}::${userId}`;
   }
 
-  async findUserByEmail(email: string): Promise<UserWithSecret | null> {
-    const id = this.usersByEmail.get(email.toLowerCase());
+  private trustKey(owner: string, peer: string): string {
+    return `${owner}::${peer}`;
+  }
+
+  async createUser(input: { code: string; displayName: string }): Promise<User> {
+    const code = input.code.toLowerCase();
+    if (this.usersByCode.has(code)) throw new Error("code_taken");
+    const user: User = {
+      id: randomUUID(),
+      code,
+      displayName: input.displayName,
+      createdAt: Date.now(),
+    };
+    this.users.set(user.id, user);
+    this.usersByCode.set(code, user.id);
+    return user;
+  }
+
+  async findUserByCode(code: string): Promise<User | null> {
+    const id = this.usersByCode.get(code.toLowerCase());
     return id ? (this.users.get(id) ?? null) : null;
   }
 
   async findUserById(id: string): Promise<User | null> {
-    const user = this.users.get(id);
-    return user ? strip(user) : null;
+    return this.users.get(id) ?? null;
   }
 
   async updateUser(id: string, patch: { displayName?: string }): Promise<User> {
     const user = this.users.get(id);
     if (!user) throw new Error("user_not_found");
     if (patch.displayName !== undefined) user.displayName = patch.displayName;
-    return strip(user);
+    return user;
   }
 
-  async saveRefreshToken(record: RefreshTokenRecord): Promise<void> {
-    this.refreshTokens.set(record.tokenHash, record);
+  async countUsers(): Promise<number> {
+    return this.users.size;
   }
 
-  async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {
-    return this.refreshTokens.get(tokenHash) ?? null;
+  async saveCredential(credential: DeviceCredential): Promise<void> {
+    this.credentials.set(this.credentialKey(credential.deviceId, credential.userId), { ...credential });
   }
 
-  async revokeRefreshToken(tokenHash: string, at: number): Promise<void> {
-    const record = this.refreshTokens.get(tokenHash);
-    if (record) record.revokedAt = at;
+  async credentialsForDevice(deviceId: string): Promise<DeviceCredential[]> {
+    return [...this.credentials.values()].filter((c) => c.deviceId === deviceId);
   }
 
-  async revokeAllRefreshTokens(userId: string): Promise<void> {
-    for (const record of this.refreshTokens.values()) {
-      if (record.userId === userId && record.revokedAt === null) record.revokedAt = Date.now();
-    }
+  async touchCredential(deviceId: string, userId: string, at: number): Promise<void> {
+    const credential = this.credentials.get(this.credentialKey(deviceId, userId));
+    if (credential) credential.lastSeenAt = at;
+  }
+
+  async revokeCredential(deviceId: string, userId: string): Promise<void> {
+    this.credentials.delete(this.credentialKey(deviceId, userId));
   }
 
   async getOrCreateConversation(a: string, b: string): Promise<Conversation> {
@@ -110,6 +113,17 @@ export class MemoryStore implements Store {
 
   async listConversations(userId: string): Promise<Conversation[]> {
     return [...this.conversations.values()].filter((c) => c.memberIds.includes(userId));
+  }
+
+  async peerIdsOf(userId: string): Promise<string[]> {
+    const peers = new Set<string>();
+    for (const conversation of this.conversations.values()) {
+      if (!conversation.memberIds.includes(userId)) continue;
+      for (const member of conversation.memberIds) {
+        if (member !== userId) peers.add(member);
+      }
+    }
+    return [...peers];
   }
 
   async insertMessage(message: Message): Promise<InsertMessageResult> {
@@ -175,54 +189,19 @@ export class MemoryStore implements Store {
     }
   }
 
-  private contactKey(owner: string, contact: string): string {
-    return `${owner}::${contact}`;
+  async setTrust(ownerUserId: string, peerUserId: string, trusted: boolean): Promise<Trust> {
+    const key = this.trustKey(ownerUserId, peerUserId);
+    const now = Date.now();
+    const existing = this.trusts.get(key);
+    const trust: Trust = existing
+      ? { ...existing, trusted, updatedAt: now }
+      : { ownerUserId, peerUserId, trusted, createdAt: now, updatedAt: now };
+    this.trusts.set(key, trust);
+    return trust;
   }
 
-  async addContact(ownerUserId: string, contactUserId: string, isTrusted: boolean): Promise<Contact> {
-    const contact: Contact = { ownerUserId, contactUserId, isTrusted, createdAt: Date.now() };
-    this.contacts.set(this.contactKey(ownerUserId, contactUserId), contact);
-    return contact;
-  }
-
-  async listContacts(ownerUserId: string): Promise<Contact[]> {
-    return [...this.contacts.values()]
-      .filter((c) => c.ownerUserId === ownerUserId)
-      .sort((a, b) => a.createdAt - b.createdAt);
-  }
-
-  async findContact(ownerUserId: string, contactUserId: string): Promise<Contact | null> {
-    return this.contacts.get(this.contactKey(ownerUserId, contactUserId)) ?? null;
-  }
-
-  async updateContact(
-    ownerUserId: string,
-    contactUserId: string,
-    patch: { isTrusted?: boolean },
-  ): Promise<Contact | null> {
-    const contact = this.contacts.get(this.contactKey(ownerUserId, contactUserId));
-    if (!contact) return null;
-    if (patch.isTrusted !== undefined) contact.isTrusted = patch.isTrusted;
-    return contact;
-  }
-
-  async deleteContact(ownerUserId: string, contactUserId: string): Promise<void> {
-    this.contacts.delete(this.contactKey(ownerUserId, contactUserId));
-  }
-
-  async getSettings(userId: string): Promise<UserSettings> {
-    const existing = this.settings.get(userId);
-    if (existing) return existing;
-    const created: UserSettings = { userId, ...DEFAULT_SETTINGS };
-    this.settings.set(userId, created);
-    return created;
-  }
-
-  async updateSettings(userId: string, patch: Partial<Omit<UserSettings, "userId">>): Promise<UserSettings> {
-    const current = await this.getSettings(userId);
-    const next: UserSettings = { ...current, ...patch, userId };
-    this.settings.set(userId, next);
-    return next;
+  async findTrust(ownerUserId: string, peerUserId: string): Promise<Trust | null> {
+    return this.trusts.get(this.trustKey(ownerUserId, peerUserId)) ?? null;
   }
 
   async upsertDevice(device: Device): Promise<void> {
@@ -243,9 +222,4 @@ export class MemoryStore implements Store {
     this.messages.clear();
     this.conversations.clear();
   }
-}
-
-function strip(user: UserWithSecret): User {
-  const { passwordHash: _passwordHash, ...rest } = user;
-  return rest;
 }

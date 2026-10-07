@@ -1,17 +1,17 @@
 package com.airwhispers.data.remote
 
-import com.airwhispers.data.model.Account
-import com.airwhispers.data.model.Contact
 import com.airwhispers.data.model.Conversation
 import com.airwhispers.data.model.DeliveryState
+import com.airwhispers.data.model.Identity
 import com.airwhispers.data.model.Message
 import com.airwhispers.data.model.MessagePriority
 import com.airwhispers.data.model.MessageState
+import com.airwhispers.data.model.Peer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * Wire contract shared with the backend (`backend/src/schemas.ts`).
+ * Wire contract shared with the backend (`backend/src/app.ts`).
  *
  * Every field except the identifiers has a default so that adding fields on the
  * server never breaks an installed client.
@@ -30,66 +30,76 @@ data class ApiErrorDetail(
 @Serializable
 data class TokensDto(
     @SerialName("accessToken") val accessToken: String,
-    @SerialName("refreshToken") val refreshToken: String,
-    @SerialName("expiresIn") val expiresIn: Long = 900L,
+    @SerialName("expiresIn") val expiresIn: Long = 3600L,
     @SerialName("tokenType") val tokenType: String = "Bearer",
 )
 
 @Serializable
 data class UserDto(
     val id: String,
-    val email: String,
+    val code: String = "",
     @SerialName("displayName") val displayName: String = "",
-    val handle: String? = null,
     @SerialName("createdAt") val createdAt: String? = null,
+    /** Only present on conversation peers. */
+    val online: Boolean = false,
 ) {
-    fun toAccount(): Account = Account(
+    fun toIdentity(): Identity = Identity(
         id = id,
-        email = email,
-        displayName = displayName.ifBlank { email.substringBefore('@') },
-        handle = handle,
+        code = code,
+        displayName = displayName.ifBlank { "This phone" },
         createdAt = TimeParse.toEpochMillis(createdAt),
     )
 
-    fun toContact(isTrusted: Boolean, conversationId: String?): Contact = Contact(
+    fun toPeer(allowsSpeak: Boolean, conversationId: String?): Peer = Peer(
         id = id,
-        userId = id,
-        displayName = displayName.ifBlank { email.substringBefore('@') },
-        email = email,
-        isTrusted = isTrusted,
+        code = code,
+        displayName = displayName.ifBlank { "Someone" },
+        allowsSpeak = allowsSpeak,
         conversationId = conversationId,
     )
 }
 
+/** Response of both /device/register and /device/token. */
 @Serializable
-data class AuthResponse(
+data class DeviceResponse(
     val user: UserDto,
     val tokens: TokensDto,
+    /** Only ever returned once, when the identity is first created. */
+    @SerialName("deviceSecret") val deviceSecret: String? = null,
+)
+
+@Serializable
+data class DeviceRegisterRequest(
+    @SerialName("deviceId") val deviceId: String,
+    @SerialName("deviceSecret") val deviceSecret: String? = null,
+    @SerialName("displayName") val displayName: String? = null,
+    val platform: String = "android",
+    @SerialName("appVersion") val appVersion: String? = null,
+)
+
+@Serializable
+data class DeviceSecretRequest(
+    @SerialName("deviceId") val deviceId: String,
+    @SerialName("deviceSecret") val deviceSecret: String,
 )
 
 @Serializable
 data class MeResponse(val user: UserDto)
 
 @Serializable
-data class RegisterRequest(
-    val email: String,
-    val password: String,
-    @SerialName("displayName") val displayName: String,
-    @SerialName("deviceId") val deviceId: String? = null,
-)
-
-@Serializable
-data class LoginRequest(
-    val email: String,
-    val password: String,
-    @SerialName("deviceId") val deviceId: String? = null,
-)
-
-@Serializable
-data class RefreshRequest(@SerialName("refreshToken") val refreshToken: String)
-
-@Serializable
 data class UpdateProfileRequest(@SerialName("displayName") val displayName: String)
+
+@Serializable
+data class ServerInfoDto(
+    val name: String = "",
+    val version: String = "",
+    val apiVersion: String = "v1",
+    @SerialName("realtimePath") val realtimePath: String = "/api/v1/realtime",
+    @SerialName("registrationOpen") val registrationOpen: Boolean = true,
+    /** "device" — no accounts on this server. */
+    val registration: String = "device",
+    @SerialName("codeLength") val codeLength: Int = 6,
+)
 
 @Serializable
 data class MessageDto(
@@ -103,7 +113,10 @@ data class MessageDto(
     val priority: String = "NORMAL",
     @SerialName("deliveryStatus") val deliveryStatus: String = "sent",
     @SerialName("readStatus") val readStatus: String = "unread",
-    @SerialName("speakEligible") val speakEligible: Boolean = true,
+    /** The recipient's phone actually spoke it. */
+    val spoken: Boolean = false,
+    /** The recipient allows this sender to whisper to them. */
+    @SerialName("speakEligible") val speakEligible: Boolean = false,
 ) {
     fun toDomain(conversationIdFallback: String, selfId: String): Message = Message(
         id = id,
@@ -121,6 +134,8 @@ data class MessageDto(
         },
         priority = if (priority.equals("SPEAK_NOW", true)) MessagePriority.SPEAK_NOW else MessagePriority.NORMAL,
         isMine = senderId == selfId,
+        spokenByRecipient = spoken,
+        speakEligible = speakEligible,
     )
 }
 
@@ -130,17 +145,22 @@ data class ConversationDto(
     @SerialName("peer") val peer: UserDto,
     @SerialName("lastMessage") val lastMessage: MessageDto? = null,
     @SerialName("unreadCount") val unreadCount: Int = 0,
-    @SerialName("peerTrusted") val peerTrusted: Boolean = false,
+    /** May this peer's messages be spoken on this device? */
+    @SerialName("youAllowSpeak") val youAllowSpeak: Boolean = false,
+    /** May this device's messages be spoken on theirs? */
+    @SerialName("peerAllowsSpeak") val peerAllowsSpeak: Boolean = false,
 ) {
     fun toDomain(): Conversation = Conversation(
         id = id,
         peerId = peer.id,
-        peerDisplayName = peer.displayName.ifBlank { peer.email.substringBefore('@') },
-        peerEmail = peer.email,
+        peerCode = peer.code,
+        peerDisplayName = peer.displayName.ifBlank { "Someone" },
+        peerOnline = peer.online,
         lastMessageText = lastMessage?.text,
         lastMessageAt = lastMessage?.createdAt?.let { TimeParse.toEpochMillis(it) },
         unreadCount = unreadCount,
-        peerTrusted = peerTrusted,
+        youAllowSpeak = youAllowSpeak,
+        peerAllowsSpeak = peerAllowsSpeak,
     )
 }
 
@@ -157,7 +177,10 @@ data class MessageListResponse(val messages: List<MessageDto> = emptyList())
 data class MessageResponse(val message: MessageDto)
 
 @Serializable
-data class CreateConversationRequest(@SerialName("peerUserId") val peerUserId: String)
+data class CreateConversationRequest(val code: String)
+
+@Serializable
+data class TrustRequest(val trusted: Boolean)
 
 @Serializable
 data class SendMessageRequest(
@@ -167,67 +190,12 @@ data class SendMessageRequest(
 )
 
 @Serializable
-data class ContactDto(
-    val id: String,
-    @SerialName("user") val user: UserDto,
-    @SerialName("isTrusted") val isTrusted: Boolean = false,
-    @SerialName("conversationId") val conversationId: String? = null,
-) {
-    fun toDomain(): Contact = user.toContact(isTrusted = isTrusted, conversationId = conversationId)
-}
-
-@Serializable
-data class ContactListResponse(val contacts: List<ContactDto> = emptyList())
-
-@Serializable
-data class ContactResponse(val contact: ContactDto)
-
-@Serializable
-data class AddContactRequest(val email: String)
-
-@Serializable
-data class UpdateContactRequest(
-    @SerialName("isTrusted") val isTrusted: Boolean? = null,
-    @SerialName("displayName") val displayName: String? = null,
-)
-
-@Serializable
-data class SettingsDto(
-    @SerialName("speakMessages") val speakMessages: Boolean = false,
-    @SerialName("onlyDuringCalls") val onlyDuringCalls: Boolean = true,
-    @SerialName("trustedContactsOnly") val trustedContactsOnly: Boolean = true,
-    @SerialName("preferBluetooth") val preferBluetooth: Boolean = true,
-    @SerialName("languageTag") val languageTag: String = "en-IN",
-    @SerialName("speechRate") val speechRate: Float = 1.0f,
-    @SerialName("pitch") val pitch: Float = 1.0f,
-    @SerialName("emojiMode") val emojiMode: String = "DESCRIBE_IMPORTANT",
-)
-
-@Serializable
-data class SettingsResponse(val settings: SettingsDto)
-
-@Serializable
-data class UpdateSettingsRequest(
-    @SerialName("speakMessages") val speakMessages: Boolean? = null,
-    @SerialName("onlyDuringCalls") val onlyDuringCalls: Boolean? = null,
-    @SerialName("trustedContactsOnly") val trustedContactsOnly: Boolean? = null,
-    @SerialName("preferBluetooth") val preferBluetooth: Boolean? = null,
-    @SerialName("languageTag") val languageTag: String? = null,
-    @SerialName("speechRate") val speechRate: Float? = null,
-    @SerialName("pitch") val pitch: Float? = null,
-    @SerialName("emojiMode") val emojiMode: String? = null,
-)
-
-@Serializable
 data class DeviceRequest(
     @SerialName("deviceId") val deviceId: String,
     val platform: String = "android",
     @SerialName("pushToken") val pushToken: String? = null,
     @SerialName("appVersion") val appVersion: String? = null,
 )
-
-@Serializable
-data class MarkReadResponse(val ok: Boolean = true)
 
 @Serializable
 data class HealthResponse(
@@ -249,12 +217,36 @@ data class EventDto(
     @SerialName("sentAt") val sentAt: String? = null,
 )
 
+/** `presence.updated` — a chat partner came online or went offline. */
+@Serializable
+data class PresenceDto(
+    @SerialName("userId") val userId: String,
+    val online: Boolean = false,
+)
+
+/** `typing` — the other side is writing right now. */
+@Serializable
+data class TypingDto(
+    @SerialName("conversationId") val conversationId: String,
+    @SerialName("userId") val userId: String = "",
+)
+
+/** `peer.updated` — the other side renamed themselves or changed consent. */
+@Serializable
+data class PeerUpdatedDto(
+    @SerialName("userId") val userId: String,
+    @SerialName("displayName") val displayName: String? = null,
+    @SerialName("allowsSpeak") val allowsSpeak: Boolean? = null,
+)
+
 object EventTypes {
     const val MESSAGE_CREATED = "message.created"
     const val MESSAGE_UPDATED = "message.updated"
     const val MESSAGE_READ = "message.read"
     const val CONVERSATION_UPDATED = "conversation.updated"
-    const val CONTACT_UPDATED = "contact.updated"
+    const val PEER_UPDATED = "peer.updated"
+    const val PRESENCE_UPDATED = "presence.updated"
+    const val TYPING = "typing"
     const val AUTH_REQUIRED = "auth.required"
     const val AUTH_OK = "auth.ok"
     const val PONG = "pong"

@@ -11,8 +11,14 @@ object ProductConfig {
     const val SUPPORT_EMAIL: String = "support@airwhispers.app"
     const val DEFAULT_API_VERSION: String = "v1"
 
-    /** Feature flags — keep advanced behaviour opt-in while it matures. */
-    const val WHISPER_MODE_ENABLED: Boolean = false
+    /**
+     * Feature flags — keep advanced behaviour opt-in while it matures.
+     *
+     * Whisper mode is the core of the product: during a call the message is
+     * spoken quietly through the current output (speaker or earbuds) instead of
+     * at full volume. The switch is per-device; this flag is the kill-switch.
+     */
+    const val WHISPER_MODE_ENABLED: Boolean = true
     const val VOICE_REPLY_ENABLED: Boolean = false
     const val SMART_TTS_ENABLED: Boolean = false
 

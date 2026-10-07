@@ -47,6 +47,8 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
     val queue by viewModel.queue.collectAsState()
     val callStatus by viewModel.callStatus.collectAsState()
     val capability by viewModel.capability.collectAsState()
+    val conversations by viewModel.conversations.collectAsState()
+    val speech by viewModel.speech.collectAsState()
     var manualCall by remember { mutableStateOf(false) }
 
     Column(
@@ -74,9 +76,11 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 Text(
                     if (callAssist.enabled) {
-                        "AirWhispers is listening for messages. Anything allowed by your rules will be spoken through ${viewModel.audioRoute.lowercase()}."
+                        "AirWhispers is listening. Messages from people you allow are spoken through " +
+                            "${viewModel.audioRoute.lowercase()} — quietly, while your call keeps going."
                     } else {
-                        "Start Call Assist right before or during a call. Nothing is spoken until then."
+                        "Switch this on right before or during a call in WhatsApp, Meet, Discord or the dialer. " +
+                            "Nothing is spoken until then."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -92,10 +96,10 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
                         Button(
                             onClick = {
                                 startCallAssist()
-                                viewModel.setCallAssistEnabled(true)
+                                viewModel.startListening()
                             },
                             modifier = Modifier.weight(1f),
-                        ) { Text("Start Call Assist") }
+                        ) { Text("Start listening") }
                     }
                     OutlinedButton(
                         onClick = {
@@ -149,9 +153,19 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
                     viewModel.updateCallAssist { it.copy(onlyDuringCalls = value) }
                 },
             )
+            if (com.airwhispers.config.ProductConfig.WHISPER_MODE_ENABLED) {
+                SwitchRow(
+                    title = "Whisper mode",
+                    subtitle = "Speak softly so only you (or your earbuds) hear it, not the room.",
+                    checked = speech.whisperMode,
+                    onCheckedChange = { value ->
+                        viewModel.updateSpeech { it.copy(whisperMode = value) }
+                    },
+                )
+            }
             SwitchRow(
-                title = "Trusted contacts only",
-                subtitle = "Everyone else stays a normal notification.",
+                title = "Only people I allow",
+                subtitle = "Everyone else stays a normal notification. You allow people one by one, below.",
                 checked = callAssist.trustedContactsOnly,
                 onCheckedChange = { value ->
                     viewModel.updateCallAssist { it.copy(trustedContactsOnly = value) }
@@ -165,6 +179,24 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
                     viewModel.updateCallAssist { it.copy(preferBluetooth = value) }
                 },
             )
+        }
+
+        SectionCard(title = "Who may whisper to you") {
+            if (conversations.isEmpty()) {
+                SettingRow(
+                    title = "Nobody yet",
+                    subtitle = "Add someone's code in the Chats tab, then allow them here.",
+                )
+            } else {
+                conversations.forEach { conversation ->
+                    SwitchRow(
+                        title = conversation.peerDisplayName,
+                        subtitle = "code ${prettyCode(conversation.peerCode)}",
+                        checked = conversation.youAllowSpeak,
+                        onCheckedChange = { allowed -> viewModel.setSpeakAllowed(conversation, allowed) },
+                    )
+                }
+            }
         }
 
         SectionCard(title = "What this device can detect") {

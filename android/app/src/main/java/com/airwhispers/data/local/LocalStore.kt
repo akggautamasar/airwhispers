@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.airwhispers.core.DefaultDispatchers
 import com.airwhispers.core.DispatcherProvider
-import com.airwhispers.data.model.Contact
+import com.airwhispers.data.model.Peer
 import com.airwhispers.data.model.Conversation
 import com.airwhispers.data.model.DeliveryState
 import com.airwhispers.data.model.Message
@@ -51,8 +51,14 @@ class LocalStore(
         }
     }
 
-    suspend fun setConversationTrust(peerId: String, trusted: Boolean) = transaction { db ->
-        db.update(T_CONVERSATIONS, ContentValues().apply { put(C_PEER_TRUSTED, if (trusted) 1 else 0) }, "$C_PEER_ID = ?", arrayOf(peerId))
+    /** I changed my mind about letting this peer whisper to me. */
+    suspend fun setSpeakPermission(peerId: String, allowed: Boolean) = transaction { db ->
+        db.update(T_CONVERSATIONS, ContentValues().apply { put(C_YOU_ALLOW, if (allowed) 1 else 0) }, "$C_PEER_ID = ?", arrayOf(peerId))
+    }
+
+    /** The peer changed their mind about my messages being spoken on their phone. */
+    suspend fun setPeerAllowsSpeak(peerId: String, allowed: Boolean) = transaction { db ->
+        db.update(T_CONVERSATIONS, ContentValues().apply { put(C_PEER_ALLOWS, if (allowed) 1 else 0) }, "$C_PEER_ID = ?", arrayOf(peerId))
     }
 
     suspend fun resetUnread(conversationId: String) = transaction { db ->
@@ -186,28 +192,30 @@ class LocalStore(
         }
     }
 
-    // --------------------------------------------------------------------- contacts
+    // ----------------------------------------------------------------------- peers
 
-    suspend fun contacts(): List<Contact> = query { db ->
-        db.query(T_CONTACTS, null, null, null, null, null, "$C_DISPLAY_NAME COLLATE NOCASE ASC").use { c ->
-            buildList { while (c.moveToNext()) add(c.toContact()) }
+    suspend fun peers(): List<Peer> = query { db ->
+        db.query(T_PEERS, null, null, null, null, null, "$C_DISPLAY_NAME COLLATE NOCASE ASC").use { c ->
+            buildList { while (c.moveToNext()) add(c.toPeer()) }
         }
     }
 
-    suspend fun upsertContacts(items: List<Contact>) = transaction { db ->
-        items.forEach { db.insertWithOnConflict(T_CONTACTS, null, it.toValues(), SQLiteDatabase.CONFLICT_REPLACE) }
+    suspend fun upsertPeers(items: List<Peer>) = transaction { db ->
+        items.forEach { db.insertWithOnConflict(T_PEERS, null, it.toValues(), SQLiteDatabase.CONFLICT_REPLACE) }
     }
 
-    suspend fun setContactTrust(userId: String, trusted: Boolean) = transaction { db ->
-        db.update(T_CONTACTS, ContentValues().apply { put(C_TRUSTED, if (trusted) 1 else 0) }, "$C_USER_ID = ?", arrayOf(userId))
+    /** Records whether this device may speak messages from that peer. */
+    suspend fun setPeerAllowsSpeakPermission(userId: String, allowed: Boolean) = transaction { db ->
+        db.update(T_PEERS, ContentValues().apply { put(C_ALLOWS_SPEAK, if (allowed) 1 else 0) }, "$C_USER_ID = ?", arrayOf(userId))
     }
 
-    suspend fun deleteContact(userId: String) = transaction { db ->
-        db.delete(T_CONTACTS, "$C_USER_ID = ?", arrayOf(userId))
+    suspend fun deletePeer(userId: String) = transaction { db ->
+        db.delete(T_PEERS, "$C_USER_ID = ?", arrayOf(userId))
     }
 
-    suspend fun isTrustedSender(userId: String): Boolean = query { db ->
-        db.query(T_CONTACTS, arrayOf(C_TRUSTED), "$C_USER_ID = ?", arrayOf(userId), null, null, null).use { c ->
+    /** Fallback used when a message arrives before the peer row is known. */
+    suspend fun allowsSpeaker(userId: String): Boolean = query { db ->
+        db.query(T_PEERS, arrayOf(C_ALLOWS_SPEAK), "$C_USER_ID = ?", arrayOf(userId), null, null, null).use { c ->
             c.moveToFirst() && c.getInt(0) == 1
         }
     }
@@ -227,11 +235,11 @@ class LocalStore(
         }
     }
 
-    /** Used on sign-out: a signed-out device keeps no message history. */
+    /** Used when the user asks for a new code: nothing personal stays behind. */
     suspend fun purgeAll() = transaction { db ->
         db.delete(T_MESSAGES, null, null)
         db.delete(T_CONVERSATIONS, null, null)
-        db.delete(T_CONTACTS, null, null)
+        db.delete(T_PEERS, null, null)
         db.delete(T_META, null, null)
     }
 
@@ -259,22 +267,26 @@ class LocalStore(
         put(C_ID, id)
         put(C_PEER_ID, peerId)
         put(C_PEER_NAME, peerDisplayName)
-        put(C_PEER_EMAIL, peerEmail)
+        put(C_PEER_CODE, peerCode)
         put(C_LAST_TEXT, lastMessageText)
         put(C_LAST_AT, lastMessageAt ?: 0L)
         put(C_UNREAD, unreadCount)
-        put(C_PEER_TRUSTED, if (peerTrusted) 1 else 0)
+        put(C_YOU_ALLOW, if (youAllowSpeak) 1 else 0)
+        put(C_PEER_ALLOWS, if (peerAllowsSpeak) 1 else 0)
+        // Presence is a live signal; it is deliberately not persisted.
     }
 
     private fun Cursor.toConversation() = Conversation(
         id = string(C_ID),
         peerId = string(C_PEER_ID),
         peerDisplayName = string(C_PEER_NAME),
-        peerEmail = string(C_PEER_EMAIL),
+        peerCode = string(C_PEER_CODE),
+        peerOnline = false,
         lastMessageText = nullableString(C_LAST_TEXT),
         lastMessageAt = getLong(getColumnIndexOrThrow(C_LAST_AT)).takeIf { it > 0 },
         unreadCount = getInt(getColumnIndexOrThrow(C_UNREAD)),
-        peerTrusted = getInt(getColumnIndexOrThrow(C_PEER_TRUSTED)) == 1,
+        youAllowSpeak = getInt(getColumnIndexOrThrow(C_YOU_ALLOW)) == 1,
+        peerAllowsSpeak = getInt(getColumnIndexOrThrow(C_PEER_ALLOWS)) == 1,
     )
 
     private fun Message.toValues() = ContentValues().apply {
@@ -290,6 +302,7 @@ class LocalStore(
         put(C_PRIORITY, priority.name)
         put(C_IS_MINE, if (isMine) 1 else 0)
         if (spokenAt != null) put(C_SPOKEN_AT, spokenAt) else putNull(C_SPOKEN_AT)
+        put(C_SPOKEN_BY_RECIPIENT, if (spokenByRecipient) 1 else 0)
         put(C_FAILURE, failureReason)
     }
 
@@ -308,25 +321,24 @@ class LocalStore(
             priority = runCatching { MessagePriority.valueOf(string(C_PRIORITY)) }.getOrDefault(MessagePriority.NORMAL),
             isMine = getInt(getColumnIndexOrThrow(C_IS_MINE)) == 1,
             spokenAt = if (isNull(spokenIdx)) null else getLong(spokenIdx),
+            spokenByRecipient = getInt(getColumnIndexOrThrow(C_SPOKEN_BY_RECIPIENT)) == 1,
             failureReason = nullableString(C_FAILURE),
         )
     }
 
-    private fun Contact.toValues() = ContentValues().apply {
-        put(C_USER_ID, userId)
-        put(C_ID, id)
+    private fun Peer.toValues() = ContentValues().apply {
+        put(C_USER_ID, id)
+        put(C_CODE, code)
         put(C_DISPLAY_NAME, displayName)
-        put(C_EMAIL, email)
-        put(C_TRUSTED, if (isTrusted) 1 else 0)
+        put(C_ALLOWS_SPEAK, if (allowsSpeak) 1 else 0)
         put(C_CONVERSATION_ID, conversationId)
     }
 
-    private fun Cursor.toContact() = Contact(
-        id = string(C_ID),
-        userId = string(C_USER_ID),
+    private fun Cursor.toPeer() = Peer(
+        id = string(C_USER_ID),
+        code = string(C_CODE),
         displayName = string(C_DISPLAY_NAME),
-        email = string(C_EMAIL),
-        isTrusted = getInt(getColumnIndexOrThrow(C_TRUSTED)) == 1,
+        allowsSpeak = getInt(getColumnIndexOrThrow(C_ALLOWS_SPEAK)) == 1,
         conversationId = nullableString(C_CONVERSATION_ID),
     )
 
@@ -349,11 +361,12 @@ class LocalStore(
                     $C_ID TEXT PRIMARY KEY,
                     $C_PEER_ID TEXT NOT NULL,
                     $C_PEER_NAME TEXT NOT NULL,
-                    $C_PEER_EMAIL TEXT NOT NULL,
+                    $C_PEER_CODE TEXT NOT NULL DEFAULT '',
                     $C_LAST_TEXT TEXT,
                     $C_LAST_AT INTEGER NOT NULL DEFAULT 0,
                     $C_UNREAD INTEGER NOT NULL DEFAULT 0,
-                    $C_PEER_TRUSTED INTEGER NOT NULL DEFAULT 0
+                    $C_YOU_ALLOW INTEGER NOT NULL DEFAULT 0,
+                    $C_PEER_ALLOWS INTEGER NOT NULL DEFAULT 0
                 )
                 """.trimIndent(),
             )
@@ -372,6 +385,7 @@ class LocalStore(
                     $C_PRIORITY TEXT NOT NULL,
                     $C_IS_MINE INTEGER NOT NULL DEFAULT 0,
                     $C_SPOKEN_AT INTEGER,
+                    $C_SPOKEN_BY_RECIPIENT INTEGER NOT NULL DEFAULT 0,
                     $C_FAILURE TEXT
                 )
                 """.trimIndent(),
@@ -380,12 +394,11 @@ class LocalStore(
             db.execSQL("CREATE INDEX idx_messages_spoken ON $T_MESSAGES ($C_SPOKEN_AT)")
             db.execSQL(
                 """
-                CREATE TABLE $T_CONTACTS (
-                    $C_ID TEXT PRIMARY KEY,
-                    $C_USER_ID TEXT NOT NULL UNIQUE,
+                CREATE TABLE $T_PEERS (
+                    $C_USER_ID TEXT PRIMARY KEY,
+                    $C_CODE TEXT NOT NULL,
                     $C_DISPLAY_NAME TEXT NOT NULL,
-                    $C_EMAIL TEXT NOT NULL,
-                    $C_TRUSTED INTEGER NOT NULL DEFAULT 0,
+                    $C_ALLOWS_SPEAK INTEGER NOT NULL DEFAULT 0,
                     $C_CONVERSATION_ID TEXT
                 )
                 """.trimIndent(),
@@ -394,10 +407,12 @@ class LocalStore(
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            // v1: local cache only — safe to rebuild rather than migrate.
+            // The cache is a cache: rebuilding it is always safe (the server and
+            // the outbox are the sources of truth for history and pending sends).
             if (oldVersion < 2) {
                 db.execSQL("DROP TABLE IF EXISTS $T_MESSAGES")
                 db.execSQL("DROP TABLE IF EXISTS $T_CONVERSATIONS")
+                db.execSQL("DROP TABLE IF EXISTS $T_PEERS")
                 db.execSQL("DROP TABLE IF EXISTS $T_CONTACTS")
                 db.execSQL("DROP TABLE IF EXISTS $T_META")
                 onCreate(db)
@@ -407,22 +422,23 @@ class LocalStore(
 
     companion object {
         private const val DB_NAME = "airwhispers.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
 
         private const val T_CONVERSATIONS = "conversations"
         private const val T_MESSAGES = "messages"
-        private const val T_CONTACTS = "contacts"
+        private const val T_PEERS = "peers"
         private const val T_META = "meta"
 
         private const val C_ID = "id"
         private const val C_CLIENT_ID = "client_id"
         private const val C_PEER_ID = "peer_id"
         private const val C_PEER_NAME = "peer_name"
-        private const val C_PEER_EMAIL = "peer_email"
+        private const val C_PEER_CODE = "peer_code"
         private const val C_LAST_TEXT = "last_text"
         private const val C_LAST_AT = "last_at"
         private const val C_UNREAD = "unread"
-        private const val C_PEER_TRUSTED = "peer_trusted"
+        private const val C_YOU_ALLOW = "you_allow_speak"
+        private const val C_PEER_ALLOWS = "peer_allows_speak"
         private const val C_CONVERSATION_ID = "conversation_id"
         private const val C_SENDER_ID = "sender_id"
         private const val C_RECIPIENT_ID = "recipient_id"
@@ -433,11 +449,12 @@ class LocalStore(
         private const val C_PRIORITY = "priority"
         private const val C_IS_MINE = "is_mine"
         private const val C_SPOKEN_AT = "spoken_at"
+        private const val C_SPOKEN_BY_RECIPIENT = "spoken_by_recipient"
         private const val C_FAILURE = "failure"
         private const val C_USER_ID = "user_id"
         private const val C_DISPLAY_NAME = "display_name"
-        private const val C_EMAIL = "email"
-        private const val C_TRUSTED = "trusted"
+        private const val C_CODE = "code"
+        private const val C_ALLOWS_SPEAK = "allows_speak"
         private const val C_META_KEY = "meta_key"
         private const val C_META_VALUE = "meta_value"
     }

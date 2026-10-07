@@ -1,5 +1,6 @@
 package com.airwhispers.ui.screens
 
+import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,7 +55,6 @@ import java.util.Locale
 private enum class Tab(val label: String, val emoji: String) {
     CHATS("Chats", "💬"),
     ASSIST("Call Assist", "🔊"),
-    CONTACTS("Contacts", "👥"),
     SETTINGS("Settings", "⚙️"),
 }
 
@@ -76,14 +79,12 @@ fun HomeScaffold(
                             when (tab) {
                                 Tab.CHATS -> "AirWhispers"
                                 Tab.ASSIST -> "Call Assist"
-                                Tab.CONTACTS -> "Contacts"
                                 Tab.SETTINGS -> "Settings"
                             },
                         )
                         if (tab == Tab.CHATS) {
-                            val listening = callAssist.enabled
                             Text(
-                                if (listening) "Listening while you are on a call" else "Not listening",
+                                if (callAssist.enabled) "Listening while you are on a call" else "Not listening",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -118,7 +119,6 @@ fun HomeScaffold(
                     onOpenChat = onOpenChat,
                 )
                 Tab.ASSIST -> CallAssistScreen(viewModel = viewModel, startCallAssist = startCallAssist)
-                Tab.CONTACTS -> ContactsScreen(viewModel = viewModel, onOpenChat = onOpenChat)
                 Tab.SETTINGS -> SettingsScreen(viewModel = viewModel)
             }
         }
@@ -134,16 +134,20 @@ private fun ChatList(
     var showNewChat by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
-        if (conversations.isEmpty()) {
-            EmptyState(
-                title = "No conversations yet",
-                body = "Add someone by their email address and start talking — anything they send can be spoken to you during a call.",
-            )
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 96.dp),
-            ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 96.dp),
+        ) {
+            item { MyCodeCard(viewModel) }
+            if (conversations.isEmpty()) {
+                item {
+                    EmptyState(
+                        title = "No chats yet",
+                        body = "Share the code above, or add someone else's code with the ✏️ button. " +
+                            "Anything they send can be whispered to you while you are on a call.",
+                    )
+                }
+            } else {
                 items(conversations, key = { it.id }) { conversation ->
                     ConversationRow(conversation) { onOpenChat(conversation.id) }
                 }
@@ -163,17 +167,79 @@ private fun ChatList(
     if (showNewChat) {
         NewChatDialog(
             onDismiss = { showNewChat = false },
-            onStart = { email, onError ->
-                viewModel.startChatWithEmail(
-                    email = email,
-                    onOpened = { conversationId ->
+            onStart = { code, onError ->
+                viewModel.openChatWithCode(code) { conversationId, error ->
+                    if (error != null) {
+                        onError(error.message)
+                    } else {
                         showNewChat = false
                         conversationId?.let(onOpenChat)
-                    },
-                    onError = onError,
-                )
+                    }
+                }
             },
         )
+    }
+}
+
+/** The one thing a stranger needs in order to reach this phone. */
+@Composable
+private fun MyCodeCard(viewModel: AppViewModel) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val code = viewModel.myCode
+
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        shape = MaterialTheme.shapes.large,
+    ) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+            Text(
+                "YOUR CODE",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                viewModel.myPrettyCode,
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "This code is this phone. Anyone you give it to can start a chat — nothing else is needed, " +
+                    "and only you decide whose messages may be spoken aloud.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = {
+                        if (code != null) clipboard.setText(AnnotatedString(code))
+                    },
+                    enabled = code != null,
+                ) { Text("Copy") }
+                TextButton(
+                    onClick = {
+                        if (code == null) return@TextButton
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                "Whisper to me on AirWhispers — my code is ${viewModel.myPrettyCode} " +
+                                    "(server: ${viewModel.backendUrl.value})",
+                            )
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share my code"))
+                    },
+                    enabled = code != null,
+                ) { Text("Share") }
+            }
+        }
     }
 }
 
@@ -200,7 +266,11 @@ private fun ConversationRow(conversation: Conversation, onClick: () -> Unit) {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (conversation.peerTrusted) {
+                    if (conversation.peerOnline) {
+                        Spacer(Modifier.width(6.dp))
+                        Text("🟢", modifier = Modifier.size(12.dp))
+                    }
+                    if (conversation.youAllowSpeak) {
                         Spacer(Modifier.width(6.dp))
                         Text("🔊", modifier = Modifier.size(14.dp))
                     }
@@ -233,24 +303,25 @@ private fun ConversationRow(conversation: Conversation, onClick: () -> Unit) {
 @Composable
 private fun NewChatDialog(
     onDismiss: () -> Unit,
-    onStart: (String, (com.airwhispers.core.AppError?) -> Unit) -> Unit,
+    onStart: (String, (String) -> Unit) -> Unit,
 ) {
-    var email by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New conversation") },
+        title = { Text("New chat") },
         text = {
             Column {
                 Text(
-                    "Enter the email address they used to sign up for AirWhispers.",
+                    "Type the code the other person sees on their AirWhispers home screen — " +
+                        "six characters, like k7m2pq.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it; error = null },
-                    label = { Text("Email") },
+                    value = code,
+                    onValueChange = { code = it; error = null },
+                    label = { Text("Their code") },
                     singleLine = true,
                     isError = error != null,
                     modifier = Modifier.fillMaxWidth(),
@@ -263,8 +334,8 @@ private fun NewChatDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onStart(email) { err -> error = err?.message ?: "Could not start the conversation." } },
-                enabled = email.contains("@"),
+                onClick = { onStart(code) { message -> error = message } },
+                enabled = code.count { it.isLetterOrDigit() } >= 6,
             ) { Text("Start") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
@@ -276,14 +347,4 @@ internal fun formatTimestamp(millis: Long?): String {
     val now = System.currentTimeMillis()
     val format = if (now - millis < 24 * 60 * 60 * 1000) "HH:mm" else "dd MMM"
     return SimpleDateFormat(format, Locale.getDefault()).format(Date(millis))
-}
-
-@Composable
-internal fun TrustBadge(trusted: Boolean) {
-    Text(
-        if (trusted) "🔊 allowed" else "🔇 muted",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontWeight = FontWeight.Medium,
-    )
 }

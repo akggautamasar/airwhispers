@@ -26,10 +26,13 @@ services:
       TRUST_PROXY: "true"
       LOG_LEVEL: info
       PUSH_INCLUDES_CONTENT: "false"
-      # Optional push (all three required to enable FCM):
+      # New devices are handed a code on first launch. Set to "false" once your
+      # friends are on board: existing devices keep working, nobody new joins.
+      ALLOW_NEW_DEVICES: "true"
+      # Optional push (only the `fcm` Android flavor uses it): paste the whole
+      # service-account JSON on one line.
+      # GOOGLE_SERVICE_ACCOUNT_JSON: '{"client_email":"...","private_key":"...","project_id":"..."}'
       # FCM_PROJECT_ID: your-firebase-project
-      # FCM_CLIENT_EMAIL: firebase-adminsdk-xxx@your-project.iam.gserviceaccount.com
-      # FCM_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
     ports:
       - "8080:8080"
     depends_on:

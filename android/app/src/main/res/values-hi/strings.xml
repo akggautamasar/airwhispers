@@ -19,11 +19,6 @@
     <string name="auth_backend_label">सर्वर का पता</string>
     <string name="auth_backend_helper">यहाँ अपने AirWhispers सर्वर का पता डालें। अपने नेटवर्क के बाहर https:// इस्तेमाल करें।</string>
     <string name="auth_backend_insecure_warning">यह पता एन्क्रिप्टेड नहीं है (http://)। नेटवर्क पर मौजूद दूसरे लोग आपके संदेश और साइन-इन टोकन पढ़ सकते हैं।</string>
-    <string name="auth_sign_in">साइन इन</string>
-    <string name="auth_sign_up">खाता बनाएँ</string>
-    <string name="auth_forgot_password">पासवर्ड भूल गए?</string>
-    <string name="auth_email">ईमेल</string>
-    <string name="auth_password">पासवर्ड</string>
     <string name="auth_display_name">दिखने वाला नाम</string>
     <string name="auth_continue">आगे बढ़ें</string>
     <string name="auth_connecting">कनेक्ट हो रहा है…</string>
@@ -47,7 +42,7 @@
     <string name="contacts_title">संपर्क</string>
     <string name="contacts_add">संपर्क जोड़ें</string>
     <string name="contacts_search_hint">ईमेल या हैंडल से खोजें</string>
-    <string name="contacts_trusted">Call Assist के लिए विश्वसनीय</string>
+    <string name="contacts_trusted">मुझे फुसफुसा सकते हैं</string>
     <string name="contacts_empty">अभी कोई संपर्क नहीं। किसी को उनके ईमेल पते से जोड़िए।</string>
 
     <!-- Call Assist -->
@@ -60,7 +55,7 @@
     <string name="call_assist_read_aloud_summary">यह चालू न हो तो संदेश आम नोटिफ़िकेशन की तरह ही आते हैं।</string>
     <string name="call_assist_only_in_calls">सिर्फ़ कॉल के दौरान</string>
     <string name="call_assist_only_in_calls_summary">केवल तब बोलें जब कॉल या वॉइस सेशन चल रहा हो।</string>
-    <string name="call_assist_trusted_only">सिर्फ़ विश्वसनीय संपर्क</string>
+    <string name="call_assist_trusted_only">सिर्फ़ वे लोग जिन्हें मैंने अनुमति दी</string>
     <string name="call_assist_prefer_bluetooth">ब्लूटूथ को प्राथमिकता</string>
     <string name="call_assist_detection_ok">इस डिवाइस पर स्वतः कॉल पहचान उपलब्ध है (%1$s)।</string>
     <string name="call_assist_detection_unavailable">इस डिवाइस पर स्वतः कॉल पहचान उपलब्ध नहीं है। कॉल से पहले या कॉल के दौरान Call Assist खुद शुरू करें।</string>
@@ -91,7 +86,7 @@
     <string name="settings_title">सेटिंग्स</string>
     <string name="settings_privacy">प्राइवेसी</string>
     <string name="settings_notifications">नोटिफ़िकेशन</string>
-    <string name="settings_account">खाता</string>
+    <string name="settings_account">यह डिवाइस</string>
     <string name="settings_security">सुरक्षा</string>
     <string name="settings_about">ऐप के बारे में</string>
     <string name="settings_sign_out">साइन आउट</string>

@@ -10,7 +10,13 @@ export interface Config {
   /** HS256 signing secret. MUST be set in production. */
   jwtSecret: string;
   accessTokenTtlSeconds: number;
-  refreshTokenTtlSeconds: number;
+  /**
+   * Whether a brand-new device may mint an identity on this server.
+   *
+   * Turn this off on a private server: existing devices keep working (they
+   * resume with their device secret), but nobody new can join.
+   */
+  allowNewDevices: boolean;
   /** Google service-account JSON for Firebase Cloud Messaging (optional). */
   fcmServiceAccountJson?: string;
   fcmProjectId?: string;
@@ -37,8 +43,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.HOST ?? "0.0.0.0",
     databaseUrl: env.DATABASE_URL,
     jwtSecret: secret || "dev-only-insecure-secret-change-me-please-32",
-    accessTokenTtlSeconds: Number(env.ACCESS_TOKEN_TTL_SECONDS ?? 900),
-    refreshTokenTtlSeconds: Number(env.REFRESH_TOKEN_TTL_SECONDS ?? 60 * 60 * 24 * 60),
+    accessTokenTtlSeconds: Number(env.ACCESS_TOKEN_TTL_SECONDS ?? 3600),
+    allowNewDevices: bool(env.ALLOW_NEW_DEVICES, true),
     fcmServiceAccountJson: env.GOOGLE_SERVICE_ACCOUNT_JSON,
     fcmProjectId: env.FCM_PROJECT_ID,
     pushIncludesContent: bool(env.PUSH_INCLUDES_CONTENT, false),

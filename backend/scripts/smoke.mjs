@@ -3,15 +3,15 @@
  *
  *   node scripts/smoke.mjs [baseUrl]
  *
- * Exercises exactly the path the Android app uses: register two accounts, open
- * the realtime socket, authenticate with a frame, send a "Speak Now" message and
- * confirm the recipient's socket receives `message.created`, then report the
- * message as spoken (the Call Assist feedback loop).
+ * Exercises exactly the path the Android app uses: two devices register and are
+ * handed codes, one opens a chat with the other's code, the recipient listens on
+ * the realtime socket, a "whisper now" message is sent, the socket receives
+ * `message.created`, speech consent is granted, and the message is reported as
+ * spoken (the Call Assist feedback loop).
  */
 import { WebSocket } from "ws";
 
 const BASE = (process.argv[2] ?? "http://127.0.0.1:8080").replace(/\/$/, "");
-const API = `${BASE}/api/v1`;
 const WS_URL = BASE.replace(/^http/, "ws") + "/api/v1/realtime";
 const suffix = Date.now().toString(36);
 
@@ -36,20 +36,25 @@ const fail = (message) => {
 const health = await request("GET", "/healthz");
 console.log(`· health: ${health.status} ${JSON.stringify(health.body)}`);
 
-const alice = await request("POST", "/api/v1/auth/register", {
-  email: `smoke-alice-${suffix}@example.com`,
-  password: "correct-horse-battery",
-  displayName: "Smoke Alice",
-  deviceId: `device-a-${suffix}`,
+const anu = await request("POST", "/api/v1/device/register", {
+  deviceId: `smoke-device-a-${suffix}`,
+  displayName: "Smoke Anu",
+  platform: "smoke",
 });
-const bob = await request("POST", "/api/v1/auth/register", {
-  email: `smoke-bob-${suffix}@example.com`,
-  password: "correct-horse-battery",
+const bob = await request("POST", "/api/v1/device/register", {
+  deviceId: `smoke-device-b-${suffix}`,
   displayName: "Smoke Bob",
-  deviceId: `device-b-${suffix}`,
+  platform: "smoke",
 });
-if (alice.status !== 201 || bob.status !== 201) fail(`register failed (${alice.status}/${bob.status})`);
-console.log("✓ two accounts created");
+if (anu.status !== 201 || bob.status !== 201) fail(`register failed (${anu.status}/${bob.status})`);
+console.log(`✓ two devices registered — codes ${anu.body.user.code} / ${bob.body.user.code} (no accounts, no passwords)`);
+
+const resumed = await request("POST", "/api/v1/device/register", {
+  deviceId: `smoke-device-a-${suffix}`,
+  deviceSecret: anu.body.deviceSecret,
+});
+if (resumed.status !== 200 || resumed.body.user.code !== anu.body.user.code) fail("device could not resume with its secret");
+console.log("✓ device resumed silently with its secret (same code, fresh token)");
 
 const socket = new WebSocket(WS_URL);
 const frames = [];
@@ -59,7 +64,7 @@ await new Promise((resolve, reject) => {
     socket.send(
       JSON.stringify({
         type: "auth",
-        data: { accessToken: bob.body.tokens.accessToken, deviceId: bob.body.deviceId ?? "device-b" },
+        data: { accessToken: bob.body.tokens.accessToken, deviceId: `smoke-device-b-${suffix}` },
       }),
     ),
   );
@@ -83,16 +88,18 @@ socket.send(JSON.stringify({ type: "ping" }));
 await new Promise((resolve) => setTimeout(resolve, 150));
 if (!frames.some((frame) => frame.type === "pong")) fail("no pong");
 
-const contact = await request("POST", "/api/v1/contacts", { email: `smoke-bob-${suffix}@example.com` }, alice.body.tokens.accessToken);
-if (contact.status !== 201) fail(`add contact failed (${contact.status})`);
-const conversationId = contact.body.contact.conversationId;
-console.log(`✓ contact + conversation (trusted=${contact.body.contact.isTrusted})`);
+// Upper case and a dash, the way a human types a code.
+const messyCode = `${bob.body.user.code.slice(0, 3).toUpperCase()}-${bob.body.user.code.slice(3).toUpperCase()}`;
+const chat = await request("POST", "/api/v1/conversations", { code: messyCode }, anu.body.tokens.accessToken);
+if (chat.status !== 201) fail(`opening the chat failed (${chat.status} ${JSON.stringify(chat.body)})`);
+const conversationId = chat.body.conversation.id;
+console.log(`✓ chat opened with "${messyCode}" (peer ${chat.body.conversation.peer.displayName})`);
 
 const send = await request(
   "POST",
   `/api/v1/conversations/${conversationId}/messages`,
   { clientMessageId: `smoke-${suffix}`, text: "Are you alone?", priority: "SPEAK_NOW" },
-  alice.body.tokens.accessToken,
+  anu.body.tokens.accessToken,
 );
 if (send.status !== 201) fail(`send failed (${send.status})`);
 console.log(`✓ message sent (priority=${send.body.message.priority}, speakEligible=${send.body.message.speakEligible})`);
@@ -101,11 +108,15 @@ await new Promise((resolve) => setTimeout(resolve, 300));
 const created = frames.find((frame) => frame.type === "message.created");
 if (!created) fail("recipient socket never received message.created");
 if (created.data.text !== "Are you alone?") fail("unexpected message text over the socket");
-console.log("✓ recipient socket received message.created");
+console.log("✓ recipient socket received message.created in realtime");
+
+const allow = await request("PATCH", `/api/v1/conversations/${conversationId}/trust`, { trusted: true }, bob.body.tokens.accessToken);
+if (allow.status !== 200 || allow.body.conversation.youAllowSpeak !== true) fail("consent toggle failed");
+console.log("✓ Bob allowed Anu to whisper to his device (consent is one-directional)");
 
 const spoken = await request("POST", `/api/v1/messages/${send.body.message.id}/spoken`, {}, bob.body.tokens.accessToken);
 if (spoken.status !== 204) fail(`spoken report failed (${spoken.status})`);
-console.log("✓ spoken feedback recorded");
+console.log("✓ spoken feedback recorded (the phone actually read it aloud)");
 
 const history = await request("GET", `/api/v1/conversations/${conversationId}/messages`, undefined, bob.body.tokens.accessToken);
 if (history.body.messages.length !== 1) fail(`expected 1 message, got ${history.body.messages.length}`);

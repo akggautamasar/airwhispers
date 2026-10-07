@@ -130,9 +130,12 @@ class CallAssistService : Service() {
     }
 
     private fun startAssist() {
-        container.settingsStore.updateCallAssist { it.copy(enabled = true) }
+        // Starting Call Assist is the explicit "yes, speak to me" gesture.
+        container.settingsStore.updateCallAssist { it.copy(enabled = true, speakMessages = true) }
         container.settingsStore.callAssistWantedAfterBoot = true
         container.relayRequirement.acquire(AppContainer.RELAY_REASON_CALL_ASSIST)
+        // Make sure this device has a code before any message can arrive.
+        container.startIdentity()
         container.startRepositoryPipeline()
 
         detector.start(scope)

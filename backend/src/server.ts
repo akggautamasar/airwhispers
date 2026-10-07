@@ -27,8 +27,12 @@ log("info", "store.selected", { kind: config.databaseUrl ? "postgres" : "memory"
 const hub = new RealtimeHub({
   path: "/api/v1/realtime",
   verifyToken: (token) => verifyAccessToken(token, config.jwtSecret),
+  // Presence: tell the people this device talks to when it comes and goes.
+  presenceAudience: (userId) => store.peerIdsOf(userId),
+  // Typing indicators are forwarded to the other member of the conversation.
+  conversationMembers: async (conversationId) => (await store.findConversation(conversationId))?.memberIds ?? [],
   log: (level, message, meta) => log(level, message, meta),
-  onAuthenticated: (userId) => log("info", "realtime.user_online", { userId }),
+  onAuthenticated: (userId) => log("info", "realtime.device_online", { userId }),
 });
 
 const pusher = new FcmPusher(config, (level, message, meta) => log(level, message, meta));

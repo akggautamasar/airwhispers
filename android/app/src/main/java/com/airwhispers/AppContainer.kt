@@ -11,6 +11,7 @@ import com.airwhispers.data.prefs.SettingsStore
 import com.airwhispers.data.remote.ApiClient
 import com.airwhispers.data.remote.RealtimeClient
 import com.airwhispers.data.repo.AirWhispersRepository
+import com.airwhispers.data.repo.IdentityStatus
 import com.airwhispers.domain.assist.CallAssistEngine
 import com.airwhispers.domain.tts.SpeechSynthesizer
 import com.airwhispers.domain.tts.TtsQueue
@@ -57,9 +58,10 @@ class AppContainer(
         settings = settingsStore,
         secrets = secretStore,
         dispatchers = dispatchers,
-        onSessionExpired = {
-            // The UI reacts by returning to the sign-in screen.
-            appScope.launch { runCatching { repository.signOut() } }
+        onIdentityLost = {
+            // The device secret stopped working (server reset, revoked identity):
+            // register again — the user is never asked to "sign in".
+            appScope.launch { runCatching { repository.ensureRegistered() } }
         },
     )
 
@@ -140,11 +142,24 @@ class AppContainer(
         repository.startPipeline(appScope)
     }
 
+    /** One-shot: registers (or resumes) this device and opens the realtime socket. */
+    fun startIdentity() {
+        appScope.launch {
+            val state = repository.ensureRegistered()
+            if (state.status == IdentityStatus.READY) repository.startPipeline(appScope)
+        }
+    }
+
     /** Called by UI screens while they are visible. */
     fun onUiVisible() {
         relayRequirement.acquire(RELAY_REASON_UI)
         startRepositoryPipeline()
-        appScope.launch { repository.refreshConversations() }
+        appScope.launch {
+            // Nothing to list until the server has handed out a code.
+            if (repository.session.value.status == IdentityStatus.READY) {
+                repository.refreshConversations()
+            }
+        }
     }
 
     fun onUiHidden() {

@@ -1,26 +1,17 @@
 package com.airwhispers.ui.screens
 
-import android.Manifest
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -30,29 +21,27 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.airwhispers.BuildConfig
 import com.airwhispers.data.model.EmojiMode
-import com.airwhispers.data.model.SpeechOutput
 import com.airwhispers.ui.AppViewModel
 import com.airwhispers.ui.components.InfoBanner
 import com.airwhispers.ui.components.SectionCard
 import com.airwhispers.ui.components.SettingRow
 import com.airwhispers.ui.components.SwitchRow
-import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(viewModel: AppViewModel) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val speech by viewModel.speech.collectAsState()
-    val session by viewModel.session.collectAsState()
+    val callAssist by viewModel.callAssist.collectAsState()
     val relay by viewModel.relayState.collectAsState()
-
-    var choice by remember { mutableStateOf<Choice?>(null) }
-    val phonePermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { }
+    var showNewCodeDialog by remember { mutableStateOf(false) }
+    var showEmojiPicker by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -61,18 +50,26 @@ fun SettingsScreen(viewModel: AppViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionCard(title = "Account") {
+        SectionCard(title = "This device") {
             SettingRow(
-                title = session.account?.displayName?.ifBlank { "Signed in" } ?: "Signed in",
-                subtitle = session.account?.email?.ifBlank { viewModel.backendUrl.value },
+                title = "Your code",
+                subtitle = "Give it to someone so they can whisper to you.",
+                trailing = { Text(viewModel.myPrettyCode, style = MaterialTheme.typography.titleMedium) },
             )
+            Row(Modifier.padding(horizontal = 12.dp)) {
+                TextButton(onClick = {
+                    viewModel.myCode?.let { clipboard.setText(AnnotatedString(it)) }
+                }) { Text("Copy code") }
+                TextButton(onClick = { showNewCodeDialog = true }) { Text("Get a new code") }
+            }
             SettingRow(
                 title = "Server",
                 subtitle = viewModel.backendUrl.value.ifBlank { "Not configured" },
             )
-            Row(Modifier.padding(horizontal = 12.dp)) {
-                TextButton(onClick = { viewModel.signOut() }) { Text("Sign out") }
-            }
+            SettingRow(
+                title = "Realtime connection",
+                subtitle = relay.name.lowercase().replace('_', ' '),
+            )
         }
 
         SectionCard(title = "Speech") {
@@ -80,57 +77,54 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 title = "Language",
                 subtitle = speech.languageTag,
                 trailing = { Text("›") },
-                onClick = {
-                    choice = Choice.Language(
-                        current = speech.languageTag,
-                        options = listOf("en-IN", "en-US", "en-GB", "hi-IN", "en-AU", "en-SG"),
-                    )
-                },
             )
-            LabelledSlider(
+            SettingRow(
                 title = "Speed",
-                value = speech.speechRate,
-                range = 0.5f..2.0f,
-                display = String.format("%.2f×", speech.speechRate),
-                onChange = { value -> viewModel.updateSpeech { it.copy(speechRate = value) } },
-            )
-            LabelledSlider(
-                title = "Pitch",
-                value = speech.pitch,
-                range = 0.5f..2.0f,
-                display = String.format("%.2f", speech.pitch),
-                onChange = { value -> viewModel.updateSpeech { it.copy(pitch = value) } },
-            )
-            LabelledSlider(
-                title = "Pause between messages",
-                value = speech.pauseBetweenMessagesMs / 1000f,
-                range = 0f..4f,
-                display = "${(speech.pauseBetweenMessagesMs / 100f).roundToInt() / 10f}s",
-                onChange = { value ->
-                    viewModel.updateSpeech { it.copy(pauseBetweenMessagesMs = (value * 1000).toLong()) }
+                subtitle = "${"%.2f".format(speech.speechRate)}×",
+                trailing = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        TextButton(onClick = {
+                            viewModel.updateSpeech { it.copy(speechRate = (it.speechRate - 0.1f).coerceAtLeast(0.3f)) }
+                        }) { Text("−") }
+                        TextButton(onClick = {
+                            viewModel.updateSpeech { it.copy(speechRate = (it.speechRate + 0.1f).coerceAtMost(2f)) }
+                        }) { Text("+") }
+                    }
                 },
+            )
+            SettingRow(
+                title = "Pitch",
+                subtitle = "${"%.2f".format(speech.pitch)}×",
+                trailing = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        TextButton(onClick = {
+                            viewModel.updateSpeech { it.copy(pitch = (it.pitch - 0.1f).coerceAtLeast(0.5f)) }
+                        }) { Text("−") }
+                        TextButton(onClick = {
+                            viewModel.updateSpeech { it.copy(pitch = (it.pitch + 0.1f).coerceAtMost(2f)) }
+                        }) { Text("+") }
+                    }
+                },
+            )
+            SettingRow(
+                title = "Pause between messages",
+                subtitle = "${speech.pauseBetweenMessagesMs} ms",
             )
             SettingRow(
                 title = "Emoji speech",
                 subtitle = AppViewModel.EMOJI_LABEL[speech.emojiMode] ?: speech.emojiMode.name,
                 trailing = { Text("›") },
-                onClick = { choice = Choice.Emoji(speech.emojiMode) },
+                onClick = { showEmojiPicker = true },
             )
             SettingRow(
                 title = "Output",
                 subtitle = AppViewModel.OUTPUT_LABEL[speech.output] ?: speech.output.name,
-                trailing = { Text("›") },
-                onClick = { choice = Choice.Output(speech.output) },
             )
-            SettingRow(
+            SwitchRow(
                 title = "Whisper mode",
-                subtitle = "Softer voice for earphones (experimental).",
-                trailing = {
-                    androidx.compose.material3.Switch(
-                        checked = speech.whisperMode,
-                        onCheckedChange = { value -> viewModel.updateSpeech { it.copy(whisperMode = value) } },
-                    )
-                },
+                subtitle = "Speak softly — meant for earbuds while you are on a call, not for the room.",
+                checked = speech.whisperMode,
+                onCheckedChange = { value -> viewModel.updateSpeech { it.copy(whisperMode = value) } },
             )
             Row(Modifier.padding(horizontal = 12.dp)) {
                 Button(onClick = { viewModel.testSpeak() }) { Text("Test voice") }
@@ -145,47 +139,35 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 onClick = {
                     val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                         .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                    runCatching { context.startActivity(intent) }
+                    context.startActivity(intent)
                 },
             )
-            SettingRow(
-                title = "Allow call detection (optional)",
-                subtitle = "Lets Call Assist start with phone calls. No call content is accessed.",
-                trailing = { Text("›") },
-                onClick = { phonePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE) },
+            InfoBanner(
+                "AirWhispers never asks for the microphone and never touches your calls. " +
+                    "Call Assist only observes that a call is happening, then speaks to you.",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                SettingRow(
-                    title = "Ignore battery optimisation",
-                    subtitle = "Recommended so spoken messages keep working with the screen off.",
-                    trailing = { Text("›") },
-                    onClick = {
-                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                            .setData(Uri.parse("package:${context.packageName}"))
-                        runCatching { context.startActivity(intent) }
-                    },
+            if (callAssist.onlyDuringCalls && !callAssist.speakMessages) {
+                InfoBanner(
+                    "Call Assist is armed but silent: switch on “Speak incoming messages” in the Call Assist tab.",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
             }
-            SettingRow(
-                title = "Realtime connection",
-                subtitle = relay.name.lowercase().replace('_', ' '),
-            )
         }
 
         SectionCard(title = "Privacy") {
-            InfoBanner(
-                "AirWhispers only handles its own messages, its own contacts and its own speech. " +
-                    "It never records calls, never opens the microphone, never reads WhatsApp/Telegram/Signal " +
-                    "content, and never touches another app's call audio.",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-            )
             SettingRow(
                 title = "Device id",
                 subtitle = viewModel.deviceId,
             )
             SettingRow(
-                title = "This device speaks with",
-                subtitle = "Your phone's own text-to-speech engine — nothing is sent to a cloud service.",
+                title = "Your phone's own voice",
+                subtitle = "Speech uses the engine on this device — message text is never sent to a cloud service.",
+            )
+            SettingRow(
+                title = "No accounts",
+                subtitle = "No email, no password, no phone number. The code above is the whole identity, and " +
+                    "the secret behind it never leaves this phone.",
             )
         }
 
@@ -195,123 +177,48 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 subtitle = "Build ${BuildConfig.VERSION_CODE} · ${BuildConfig.FLAVOR}",
             )
             SettingRow(
-                title = "Call Assist behaviour is documented",
-                subtitle = "See docs/android-limitations.md in the repository.",
+                title = "Messages you can hear",
+                subtitle = "AirWhispers speaks incoming messages to you — during a call in any other app.",
             )
         }
     }
 
-    choice?.let { selection ->
-        ChoiceDialog(
-            choice = selection,
-            onDismiss = { choice = null },
-            onSelectLanguage = { tag ->
-                viewModel.updateSpeech { it.copy(languageTag = tag) }
-                choice = null
+    if (showNewCodeDialog) {
+        AlertDialog(
+            onDismissRequest = { showNewCodeDialog = false },
+            title = { Text("Get a new code?") },
+            text = {
+                Text(
+                    "This device will forget the old code and ask the server for a new one. " +
+                        "Chats you already have stay where they are, but people who only know the old " +
+                        "code will no longer reach you.",
+                )
             },
-            onSelectEmoji = { mode ->
-                viewModel.updateSpeech { it.copy(emojiMode = mode) }
-                choice = null
+            confirmButton = {
+                TextButton(onClick = {
+                    showNewCodeDialog = false
+                    viewModel.requestNewCode { }
+                }) { Text("Get a new code") }
             },
-            onSelectOutput = { output ->
-                viewModel.updateSpeech { it.copy(output = output) }
-                choice = null
-            },
+            dismissButton = { TextButton(onClick = { showNewCodeDialog = false }) { Text("Cancel") } },
         )
     }
-}
 
-private sealed interface Choice {
-    data class Language(val current: String, val options: List<String>) : Choice
-    data class Emoji(val current: EmojiMode) : Choice
-    data class Output(val current: SpeechOutput) : Choice
-}
-
-@Composable
-private fun ChoiceDialog(
-    choice: Choice,
-    onDismiss: () -> Unit,
-    onSelectLanguage: (String) -> Unit,
-    onSelectEmoji: (EmojiMode) -> Unit,
-    onSelectOutput: (SpeechOutput) -> Unit,
-) {
-    val (title, options, select) = when (choice) {
-        is Choice.Language -> Triple(
-            "Language",
-            choice.options,
-            { value: String -> onSelectLanguage(value) },
-        )
-        is Choice.Emoji -> Triple(
-            "Emoji speech",
-            EmojiMode.entries.map { it.name },
-            { value: String -> onSelectEmoji(EmojiMode.valueOf(value)) },
-        )
-        is Choice.Output -> Triple(
-            "Output",
-            SpeechOutput.entries.map { it.name },
-            { value: String -> onSelectOutput(SpeechOutput.valueOf(value)) },
-        )
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                options.forEach { option ->
-                    val label = when (choice) {
-                        is Choice.Emoji -> AppViewModel.EMOJI_LABEL[EmojiMode.valueOf(option)] ?: option
-                        is Choice.Output -> AppViewModel.OUTPUT_LABEL[SpeechOutput.valueOf(option)] ?: option
-                        else -> option
-                    }
-                    val selected = when (choice) {
-                        is Choice.Language -> choice.current == option
-                        is Choice.Emoji -> choice.current.name == option
-                        is Choice.Output -> choice.current.name == option
-                    }
-                    TextButton(
-                        onClick = { select(option) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            (if (selected) "● " else "○ ") + label,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+    if (showEmojiPicker) {
+        AlertDialog(
+            onDismissRequest = { showEmojiPicker = false },
+            title = { Text("How should emojis be read?") },
+            text = {
+                Column {
+                    EmojiMode.entries.forEach { mode ->
+                        TextButton(onClick = {
+                            viewModel.updateSpeech { it.copy(emojiMode = mode) }
+                            showEmojiPicker = false
+                        }) { Text(AppViewModel.EMOJI_LABEL[mode] ?: mode.name) }
                     }
                 }
-                if (choice is Choice.Output) {
-                    Spacer(Modifier.height(6.dp))
-                    InfoBanner(
-                        "Android routes spoken messages through the normal media output. When earphones are " +
-                            "connected they are used automatically; AirWhispers will not force the loudspeaker " +
-                            "because that can change the routing of the call you are on.",
-                    )
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
-}
-
-@Composable
-private fun LabelledSlider(
-    title: String,
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    display: String,
-    onChange: (Float) -> Unit,
-) {
-    Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(display, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Slider(
-            value = value.coerceIn(range.start, range.endInclusive),
-            onValueChange = onChange,
-            valueRange = range,
+            },
+            confirmButton = { TextButton(onClick = { showEmojiPicker = false }) { Text("Close") } },
         )
     }
 }
