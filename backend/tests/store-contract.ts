@@ -279,4 +279,28 @@ export async function runStoreContract(t: StoreUnderTest): Promise<void> {
 
   await store.deleteDevice(asha.id, "device-1");
   assert.equal((await store.devicesForUsers([asha.id])).length, 0);
+
+  // ------------------------------------------------- malformed identifiers
+  // Ids are `uuid` columns, and PostgreSQL rejects a non-UUID string with
+  // 22P02 — a 500 at the API unless the boundary or these guards catch it
+  // first. The store's contract is that a malformed id is simply "no such
+  // row": this runs only against real PostgreSQL, where the cast actually
+  // happens and an in-memory store could not tell us the truth.
+  const garbage = "not-a-uuid";
+  assert.equal(await store.findUserById(garbage), null, "malformed user id");
+  assert.equal(await store.findConversation(garbage), null, "malformed conversation id");
+  assert.equal(await store.findMessage(garbage), null, "malformed message id");
+  assert.deepEqual(await store.listMessages(garbage, 50), [], "malformed conversation id in listMessages");
+  assert.equal(await store.findContact(garbage, asha.id), null, "malformed owner id");
+  assert.equal(await store.findContact(asha.id, garbage), null, "malformed contact id");
+
+  // Idempotent mutations are a no-op for an unknown id, not an error.
+  await store.markMessageDelivered(garbage, now);
+  await store.markMessageSpoken(garbage, now);
+  assert.deepEqual(await store.markConversationRead(garbage, asha.id, now), []);
+  await store.deleteContact(asha.id, garbage);
+
+  // The conversation still exists and is untouched by any of the above.
+  const stillThere = await store.findConversation(conversation.id);
+  assert.ok(stillThere, "valid ids keep working after malformed ones");
 }

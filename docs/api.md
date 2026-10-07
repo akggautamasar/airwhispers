@@ -23,13 +23,13 @@ Two token kinds:
 | Response | Body |
 | --- | --- |
 | `201` | `{ "user": {...}, "tokens": { "accessToken": "...", "refreshToken": "...", "expiresIn": 900, "tokenType": "Bearer" } }` |
-| `409` | `{"error":{"code":"EMAIL_TAKEN","message":"..."}}` |
-| `422` | validation error (bad email, password shorter than 8 characters) |
+| `409` | `{"error":{"code":"conflict","message":"That email is already registered"}}` |
+| `400` | validation error (bad email, password shorter than 8 characters) |
 
 ### `POST /api/v1/auth/login`
 
 Same request shape (email + password). `200` with the same `{ user, tokens }` payload.
-`401 INVALID_CREDENTIALS` on a bad pair — identical response whether the email exists or not.
+`401 unauthorized` on a bad pair — identical response whether the email exists or not.
 Rate limited to 20 requests/minute per IP (register: 10).
 
 ### `POST /api/v1/auth/refresh`
@@ -66,18 +66,21 @@ ordered by recent activity, scoped to the caller.
 ### `POST /api/v1/conversations`
 
 ```json
-{ "participantEmail": "b@example.com" }
+{ "peerUserId": "3ac13538-dd88-4a5f-b461-9f599ae85d33" }
 ```
 
 `201` with the conversation, or `200` if a conversation with that peer already exists
-(idempotent by `pair_key`). `404 USER_NOT_FOUND` if the email is unknown — the app then
-offers to add the person as a contact instead of leaking more information.
+(idempotent by `pair_key`). `404 not_found` if no such user exists — the app resolves the
+peer through `POST /api/v1/contacts` (by email) first, and offers to add the person as a
+contact instead of leaking more information.
 
 ### `GET /api/v1/conversations/:id/messages?limit=50&before=<millis>`
 
 `200 { "messages": [ … ] }`, newest-last, paginated backwards by `before`.
 Reading history from the recipient stamps `delivered_at` on messages that had none and emits
-`message.updated` to the sender. `403 NOT_A_MEMBER` for a conversation the caller is not in.
+`message.updated` to the sender. `403 forbidden` for a conversation the caller is not in —
+an unknown conversation id is a `404 not_found` with the same shape, so ids cannot be
+probed for existence.
 
 ### `POST /api/v1/conversations/:id/messages`
 
@@ -92,15 +95,17 @@ Reading history from the recipient stamps `delivered_at` on messages that had no
   pair already exists — so retrying a send never duplicates.
 * Fan-out (`message.created` over WebSocket, push to the recipient's devices) happens **only
   on create**.
-* Rate limited to 120 sends/minute per user. `422` when `text` is empty or longer than 4000
-  characters.
+* Rate limited to 120 sends/minute per user. `400 bad_request` when `text` is empty or
+  longer than 4000 characters. The conversation is resolved before the body is validated,
+  so a stranger's malformed send is a `404`/`403`, not a validation error.
 
 ## Message receipts
 
 ### `POST /api/v1/messages/:id/read`
 
-Recipient only (`403 NOT_RECIPIENT` otherwise). Sets `read_at` once; emits `message.read`
-to the sender; `200` with the updated message. Idempotent.
+Recipient only (`403 forbidden` otherwise). Sets `read_at` once; emits `message.read`
+to the sender over the WebSocket; the response is `204`, no body (the Android client sends
+this as a fire-and-forget receipt). Idempotent. `404 not_found` for an unknown message id.
 
 ### `POST /api/v1/messages/:id/spoken`
 
@@ -122,7 +127,7 @@ retry-storm.
 ```
 
 `201` with the contact. New contacts are created with **`isTrusted: false`** — Call Assist's
-privacy-first default refuses to speak strangers. `404 USER_NOT_FOUND` for unknown emails.
+privacy-first default refuses to speak strangers. `404 not_found` for unknown emails.
 
 ### `PATCH /api/v1/contacts/:id`
 
@@ -132,7 +137,7 @@ privacy-first default refuses to speak strangers. `404 USER_NOT_FOUND` for unkno
 
 `200` with the updated contact. Contact creation is also possible implicitly: if the target
 user exists but no contact row does yet, the call upserts it (so "trust this sender" from a
-notification never fails). `404 USER_NOT_FOUND` only when the target user itself is unknown.
+notification never fails). `404 not_found` only when the target user itself is unknown.
 
 ### `DELETE /api/v1/contacts/:id`
 
@@ -217,23 +222,28 @@ message upserts plus the spoken ledger make that safe.
 Every failure uses one envelope:
 
 ```json
-{ "error": { "code": "NOT_A_MEMBER", "message": "You are not a member of this conversation." } }
+{ "error": { "code": "forbidden", "message": "Not a member of this conversation" } }
 ```
 
-| Status | When |
-| --- | --- |
-| `400` | Malformed JSON (including a body that is not an object) |
-| `401` | Missing/expired/invalid token, bad credentials, bad refresh token |
-| `403` | Authenticated but not allowed (not a member, not the recipient) |
-| `404` | Unknown conversation, message, or user |
-| `409` | Conflict (email taken, pair already exists) |
-| `422` | Validation failure |
-| `429` | Rate limited — includes `retryAfterMs` |
-| `500` | Unexpected; logged with a request id, never with message content |
+Codes are lowercase and stable; clients should branch on the status code and treat the
+message as human-readable text. Ids in paths (`:id`, `:deviceId` excepted — device ids are
+client-chosen strings) are validated as UUIDs before they reach the store: a malformed id is
+`400 bad_request`, while a well-formed but unknown id is `404 not_found`, so a 500 never
+comes from a bad id.
+
+| Status | `code` | When |
+| --- | --- | --- |
+| `400` | `bad_request` | Malformed JSON, a body that is not an object, a path parameter that is not a UUID, or any field that fails validation |
+| `401` | `unauthorized` | Missing/expired/invalid token, bad credentials, bad refresh token |
+| `403` | `forbidden` | Authenticated but not allowed (not a member, not the recipient) |
+| `404` | `not_found` | Unknown conversation, message, user, or endpoint |
+| `409` | `conflict` | Conflict (email taken, pair already exists) |
+| `429` | `rate_limited` | Rate limited — includes `retryAfterMs` |
+| `500` | `internal_error` | Unexpected; logged with a request id, never with message content |
 
 The Android client maps these to typed `AppError`s, distinguishing retryable
 (`NETWORK`, `TIMEOUT`, `SERVER`, `RATE_LIMITED`) from terminal (`UNAUTHORIZED`,
-`VALIDATION`, `NOT_FOUND`) so the outbox does not retry hopeless sends forever.
+`BAD_REQUEST`, `NOT_FOUND`) so the outbox does not retry hopeless sends forever.
 
 ## Client behaviour contract
 

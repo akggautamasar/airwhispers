@@ -8,9 +8,10 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
 | Suite | Where | Command | Covers |
 | --- | --- | --- | --- |
 | Android unit tests | `android/app/src/test/java/com/airwhispers/` | `cd android && ./gradlew testStandaloneDebugUnitTest` | Text normalisation, queue semantics, assist decision gates |
-| Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Auth, authorization, messaging, idempotency, receipts, contacts, settings, rate limiting |
+| Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Auth, authorization, messaging, idempotency, receipts, contacts, settings, rate limiting, and the authorization boundaries (a stranger cannot read, write, mark read, or report spoken inside someone else's conversation) |
 | Schema reference check | `backend/scripts/check-schema-refs.ts` | part of `npm test` | Every table/column the PostgreSQL store names must exist in `sql/schema.sql`, and every `ON CONFLICT` target must have a unique or primary key |
-| **PostgreSQL store contract** | `backend/tests/store-contract.ts` | `cd backend && TEST_DATABASE_URL=postgres://… npm test` (CI: `postgres` job with a `postgres:16` service) | The production store end to end: accounts, token rotation, conversations, message idempotency, receipts, settings, devices |
+| **Documentation contract** | `backend/tests/docs-contract.test.ts` | part of `npm test` | `docs/api.md` stays true: every route it documents is registered, every registered route is documented, and each `(status, code)` row of its error table is provoked against the real app and must match. Verified to fail on injected drift (a renamed route, a reworded code) |
+| **PostgreSQL store contract** | `backend/tests/store-contract.ts` | `cd backend && TEST_DATABASE_URL=postgres://… npm test` (CI: `postgres` job with a `postgres:16` service) | The production store end to end: accounts, token rotation, conversations, message idempotency, receipts, settings, devices, and malformed ids returning "no such row" rather than a 22P02 database error |
 | Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, receipt, logout |
 | Android lint | `android/app/build.gradle.kts` (`lint { abortOnError = true }`) | as part of CI | API-level misuse (`NewApi`), permission mistakes (`MissingPermission`), Compose correctness (`StateFlowValueCalledInComposition`) — the only automated check that can catch device-behaviour bugs without a phone |
 | APK verification | `.github/workflows/android.yml` (“Verify the release APK”) | as part of CI | Zip integrity, SHA-256 self-check, `aapt2 dump badging` (package id, version name, not debuggable), `apksigner verify --print-certs`, and a byte-level check that the Hindi resources actually shipped inside `resources.arsc` |
@@ -40,6 +41,14 @@ milliseconds on any machine (and on the CI runner, which has no emulator).
 They build the real Fastify app over the in-memory store, so the code under test is the same
 code production runs — only the storage differs.
 
+`docs-contract.test.ts` exists because the authorization-boundary tests found real drift:
+the error codes had been documented uppercase (`NOT_A_MEMBER`) while the app answers
+lowercase `forbidden`, validation failures were documented as `422` while the app answers
+`400`, `POST /conversations` was documented with an `participantEmail` body while the route
+takes `peerUserId`, and the read receipt was documented as `200` with a body while the
+client — and the implementation — use `204`. The docs are now the thing under test, so
+they cannot drift again silently.
+
 **The PostgreSQL store is verified separately, and only against real PostgreSQL.** The
 in-memory store is exercised by the API tests; `store.pg.ts` and `sql/schema.sql` are
 executed together only by the store contract, which needs `TEST_DATABASE_URL` and skips
@@ -56,7 +65,14 @@ read a conversation (`403`), cannot mark another user's message read (`403`); du
 `clientMessageId` returns the original message with `200` and never creates a second row;
 history reads stamp `delivered_at`; `spoken` receipts are recipient-only and always `204`;
 `PATCH /contacts/:id` upserts a trust flag; new contacts default to untrusted; per-scope rate
-limits return `429`; and validation failures return `422` with the standard error envelope.
+limits return `429`; and validation failures return `400 bad_request` with the standard
+error envelope, including malformed UUIDs in paths (`not-a-uuid`, a hex-ish near-miss, and a
+percent-encoded traversal-shaped id) which must never reach the store and become a 500. Authorization boundaries have their own block: a stranger cannot read,
+write, mark read, or report spoken inside someone else's conversation (`403`, and `404`
+for ids that do not exist, so responses cannot be used to probe for existence); trusting a
+contact is per-owner and never touches another user's row; a duplicate `clientMessageId`
+returns the original message even when the text differs; and error envelopes never echo
+message text.
 
 ### CI
 
@@ -135,7 +151,7 @@ above; what a device must confirm is exactly the table in this and the previous 
 
 ## Regression checklist for contributors
 
-1. `cd backend && npm test` — schema-reference check + type-check + 12 API tests
+1. `cd backend && npm test` — schema-reference check + type-check + docs contract + 16 API tests
    (+ the store contract when `TEST_DATABASE_URL` is set).
 2. `cd backend && node scripts/smoke.mjs <url>` against a running server.
 3. `cd android && ./gradlew testStandaloneDebugUnitTest` — 32 unit tests (14 normaliser, 10 assist, 8 queue).

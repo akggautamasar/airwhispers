@@ -63,14 +63,21 @@ Every route re-derives the caller from the token and then checks the *resource*:
 
 | Route | Check |
 | --- | --- |
-| `GET/POST /conversations/:id/messages` | Caller is a member of the conversation → else `403 NOT_A_MEMBER` |
-| `POST /messages/:id/read`, `/spoken` | Caller is the message **recipient** → else `403 NOT_RECIPIENT` |
+| `GET/POST /conversations/:id/messages` | Caller is a member of the conversation → else `403 forbidden` (unknown id → `404`) |
+| `POST /messages/:id/read`, `/spoken` | Caller is the message **recipient** → else `403 forbidden` |
 | `PATCH/DELETE /contacts/:id` | The contact row belongs to the caller |
 | `GET /conversations` | Only conversations the caller is a member of |
 | Everything else | Authenticated, and scoped to `sub` |
 
 The tests assert these negatives explicitly (a stranger cannot read a conversation, cannot
-mark someone else's message read, cannot edit someone else's contact).
+mark someone else's message read, cannot edit someone else's contact), including that
+unknown ids cannot be told apart from forbidden ones by a stranger.
+
+Ids are validated as UUIDs at the boundary before any query: a malformed id is a
+`400 bad_request` rather than a parameter that reaches PostgreSQL (`invalid input syntax
+for type uuid`, 22P02) and surfaces as a 500. The store repeats the check and treats a
+malformed id as "no such row", so a future caller cannot turn a bad id into a database
+error either — verified against real PostgreSQL by the store contract.
 
 ## Message content
 

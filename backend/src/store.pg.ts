@@ -1,5 +1,6 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { randomUUID } from "node:crypto";
+import { isUuid } from "./ids.js";
 import {
   DEFAULT_SETTINGS,
   type Contact,
@@ -68,6 +69,7 @@ export class PgStore implements Store {
   }
 
   async findUserById(id: string): Promise<User | null> {
+    if (!isUuid(id)) return null;
     const rows = await this.q<UserRow>(`SELECT * FROM users WHERE id = $1`, [id]);
     return rows[0] ? toUser(rows[0]) : null;
   }
@@ -149,6 +151,7 @@ export class PgStore implements Store {
   }
 
   async findConversation(id: string): Promise<Conversation | null> {
+    if (!isUuid(id)) return null;
     const rows = await this.q<ConversationRow>(`SELECT * FROM conversations WHERE id = $1`, [id]);
     return rows[0] ? await this.hydrateConversation(rows[0]) : null;
   }
@@ -202,11 +205,13 @@ export class PgStore implements Store {
   }
 
   async findMessage(id: string): Promise<Message | null> {
+    if (!isUuid(id)) return null;
     const rows = await this.q<MessageRow>(`SELECT * FROM messages WHERE id = $1`, [id]);
     return rows[0] ? toMessage(rows[0]) : null;
   }
 
   async listMessages(conversationId: string, limit: number): Promise<Message[]> {
+    if (!isUuid(conversationId)) return [];
     const rows = await this.q<MessageRow>(
       `SELECT * FROM (
          SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2
@@ -239,6 +244,7 @@ export class PgStore implements Store {
   }
 
   async markConversationRead(conversationId: string, userId: string, at: number): Promise<Message[]> {
+    if (!isUuid(conversationId) || !isUuid(userId)) return [];
     const rows = await this.q<MessageRow>(
       `UPDATE messages SET read_at = $3, delivered_at = COALESCE(delivered_at, $3)
        WHERE conversation_id = $1 AND recipient_id = $2 AND read_at IS NULL
@@ -249,10 +255,12 @@ export class PgStore implements Store {
   }
 
   async markMessageDelivered(messageId: string, at: number): Promise<void> {
+    if (!isUuid(messageId)) return;
     await this.q(`UPDATE messages SET delivered_at = COALESCE(delivered_at, $2) WHERE id = $1`, [messageId, at]);
   }
 
   async markMessageSpoken(messageId: string, at: number): Promise<void> {
+    if (!isUuid(messageId)) return;
     await this.q(
       `UPDATE messages SET spoken_at = $2, delivered_at = COALESCE(delivered_at, $2) WHERE id = $1`,
       [messageId, at],
@@ -280,6 +288,7 @@ export class PgStore implements Store {
   }
 
   async findContact(ownerUserId: string, contactUserId: string): Promise<Contact | null> {
+    if (!isUuid(ownerUserId) || !isUuid(contactUserId)) return null;
     const rows = await this.q<ContactRow>(
       `SELECT * FROM contacts WHERE owner_user_id = $1 AND contact_user_id = $2`,
       [ownerUserId, contactUserId],
@@ -301,6 +310,7 @@ export class PgStore implements Store {
   }
 
   async deleteContact(ownerUserId: string, contactUserId: string): Promise<void> {
+    if (!isUuid(ownerUserId) || !isUuid(contactUserId)) return;
     await this.q(`DELETE FROM contacts WHERE owner_user_id = $1 AND contact_user_id = $2`, [
       ownerUserId,
       contactUserId,

@@ -5,6 +5,8 @@
  * boundary, and hand-rolled validators keep the supply chain tiny.
  */
 
+import { isUuid } from "./ids.js";
+
 export class ValidationError extends Error {
   readonly code = "bad_request";
   constructor(message: string) {
@@ -112,8 +114,8 @@ export function asOptionalNumber(value: unknown, field: string, min: number, max
 }
 
 export function asUuid(value: unknown, field: string): string {
-  const raw = asString(value, field, { min: 8, max: 64 });
-  if (!/^[0-9a-fA-F-]{8,64}$/.test(raw)) throw new ValidationError(`${field} must be an identifier`);
+  const raw = asString(value, field, { min: 36, max: 36 });
+  if (!isUuid(raw)) throw new ValidationError(`${field} must be a UUID`);
   return raw;
 }
 
