@@ -142,14 +142,17 @@ jobs:
             if printf '%s\n' "$BADGING" | grep -q "^application-debuggable"; then
               echo "::error::release APK is debuggable"; exit 1
             fi
+            VNAME="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")"
             # A tag push must produce an APK whose version is the tag, otherwise
             # the artefact and the release that carries it disagree.
             if [[ "$GITHUB_REF" == refs/tags/* ]]; then
               EXPECTED="${GITHUB_REF#refs/tags/}"; EXPECTED="${EXPECTED#android-v}"; EXPECTED="${EXPECTED#v}"
-              VNAME="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")"
               [ "$VNAME" = "$EXPECTED" ] || { echo "::error::APK versionName is '$VNAME', expected '$EXPECTED' from the tag"; exit 1; }
-              echo "versionName $VNAME matches the tag"
             fi
+            # An annotation, not just a log line: the log download endpoint is not
+            # reachable from every environment, so the built APK's identity (and,
+            # in the release job, its digest) is published where it can be read.
+            printf '::notice::release APK: package %s, versionName %s\n' "$PKG" "$VNAME"
           else
             echo "aapt2 not found, skipping manifest checks"
           fi
@@ -312,3 +315,13 @@ jobs:
               apks/*.apk apks/*.sha256
           fi
           gh release view "$TAG" --json url,assets --jq '"release: \(.url)", (.assets[] | "asset: \(.name) (\(.size) bytes)")'
+
+      - name: Report the published digests
+        run: |
+          set -euo pipefail
+          for apk in apks/*.apk; do
+            [ -f "$apk" ] || continue
+            printf '::notice::%s — %s bytes — sha256 %s\n' \
+              "$(basename "$apk")" "$(stat -c%s "$apk")" "$(sha256sum "$apk" | cut -d' ' -f1)"
+          done
+          echo "Compare these against the .sha256 files on the release page."
