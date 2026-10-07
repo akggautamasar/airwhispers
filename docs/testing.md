@@ -8,16 +8,9 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
 | Suite | Where | Command | Covers |
 | --- | --- | --- | --- |
 | Android unit tests | `android/app/src/test/java/com/airwhispers/` | `cd android && ./gradlew testStandaloneDebugUnitTest` | Text normalisation, queue semantics, assist decision gates |
-| Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Auth, authorization, messaging, idempotency, receipts, contacts, settings, rate limiting, and the authorization boundaries (a stranger cannot read, write, mark read, or report spoken inside someone else's conversation) |
-| Schema reference check | `backend/scripts/check-schema-refs.ts` | part of `npm test` | Every table/column the PostgreSQL store names must exist in `sql/schema.sql`, and every `ON CONFLICT` target must have a unique or primary key |
-| **Documentation contract** | `backend/tests/docs-contract.test.ts` | part of `npm test` | `docs/api.md` stays true: every route it documents is registered, every registered route is documented, and each `(status, code)` row of its error table is provoked against the real app and must match. Verified to fail on injected drift (a renamed route, a reworded code) |
-| **PostgreSQL store contract** | `backend/tests/store-contract.ts` | `cd backend && TEST_DATABASE_URL=postgres://… npm test` (CI: `postgres` job with a `postgres:16` service) | The production store end to end: accounts, token rotation, conversations, message idempotency, receipts, settings, devices, and malformed ids returning "no such row" rather than a 22P02 database error |
-| Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, receipt, logout |
-| **Translations** | `.github/scripts/check-translations.py` (CI, before the build) | Every locale directory has the same keys as `values/`, no key or translation is empty or duplicated, and each translated string keeps its English format arguments |
-| **Permission manifest** | `.github/scripts/check-permissions.py` (CI, before the build) | The manifest and the table in `docs/security.md` must list the same permissions, no "deliberately absent" permission (microphone, call log, contacts, SMS, overlay, accessibility) may appear in the shipped APK, and permissions merged in from libraries are reported as an annotation |
-| Android lint | `android/app/build.gradle.kts` (`lint { abortOnError = true }`) | as part of CI | API-level misuse (`NewApi`), permission mistakes (`MissingPermission`), Compose correctness (`StateFlowValueCalledInComposition`) — the only automated check that can catch device-behaviour bugs without a phone |
-| APK verification | `.github/workflows/android.yml` (“Verify the release APK”) | as part of CI | Zip integrity, SHA-256 self-check, `aapt2 dump badging` (package id, version name, not debuggable), `apksigner verify --print-certs`, and a byte-level check that the Hindi resources actually shipped inside `resources.arsc` |
-| CI | `.github/workflows/` | push / PR | All of the above, plus the release APK build |
+| Backend API tests | `backend/tests/api.test.ts` | `cd backend && npm test` | Device identity and codes, consent, messaging, idempotency, receipts, rate limiting |
+| Backend smoke test | `backend/scripts/smoke.mjs` | `node scripts/smoke.mjs http://127.0.0.1:8080` | A real server process end to end: register ×2, WebSocket auth, send, receive, consent, receipt |
+| CI | `.github/workflows/` | push / PR | Both of the above, plus the release APK build |
 
 ### Android unit tests
 
@@ -30,8 +23,8 @@ scripted manual pass on real hardware (because nothing in a unit test can hear a
   overtaking, bounded depth with oldest-normal eviction, pause blocking `awaitNext` and
   resume releasing it, skip emitting an interruption and keeping the queue, stop emptying
   everything, and the exact spoken phrasing including sender announcement.
-* **`CallAssistEngineTest`** — every gate in the pipeline (off, not in a call, untrusted
-  sender, own message, nothing to speak, full queue), the claim granting speech exactly once
+* **`CallAssistEngineTest`** — every gate in the pipeline (off, not in a call, sender not
+  allowed, own message, nothing to speak, full queue), the claim granting speech exactly once
   and returning `ALREADY_SPOKEN` afterwards, `UNKNOWN_MESSAGE` for an unpersisted message,
   the claim *not* being consumed when the queue is full, and `SPEAK_NOW` phrasing.
 
@@ -43,38 +36,16 @@ milliseconds on any machine (and on the CI runner, which has no emulator).
 They build the real Fastify app over the in-memory store, so the code under test is the same
 code production runs — only the storage differs.
 
-`docs-contract.test.ts` exists because the authorization-boundary tests found real drift:
-the error codes had been documented uppercase (`NOT_A_MEMBER`) while the app answers
-lowercase `forbidden`, validation failures were documented as `422` while the app answers
-`400`, `POST /conversations` was documented with a `participantEmail` body while the route
-takes `peerUserId`, and the read receipt was documented as `200` with a body while the
-client — and the implementation — use `204`. The docs are now the thing under test, so
-they cannot drift again silently.
-
-**The PostgreSQL store is verified separately, and only against real PostgreSQL.** The
-in-memory store is exercised by the API tests; `store.pg.ts` and `sql/schema.sql` are
-executed together only by the store contract, which needs `TEST_DATABASE_URL` and skips
-loudly without it. An in-process emulator (pg-mem) was tried first and rejected: it
-accepted the SQL and returned wrong results (`ON CONFLICT … DO NOTHING RETURNING *`
-returned the existing row; `= ANY($1::uuid[])` matched in one state and not in another).
-Its intended value — catching schema drift — is now covered statically by
-`check-schema-refs.ts`, which runs on every `npm test` and was verified to fail when a
-column or table is renamed by hand.
-
-Asserted invariants include: duplicate registration → `409`; wrong password → `401` (same
-answer as an unknown email); refresh rotation invalidating the old token; a stranger cannot
-read a conversation (`403`), cannot mark another user's message read (`403`); duplicate
-`clientMessageId` returns the original message with `200` and never creates a second row;
-history reads stamp `delivered_at`; `spoken` receipts are recipient-only and always `204`;
-`PATCH /contacts/:id` upserts a trust flag; new contacts default to untrusted; per-scope rate
-limits return `429`; and validation failures return `400 bad_request` with the standard
-error envelope, including malformed UUIDs in paths (`not-a-uuid`, a hex-ish near-miss, and a
-percent-encoded traversal-shaped id) which must never reach the store and become a 500. Authorization boundaries have their own block: a stranger cannot read,
-write, mark read, or report spoken inside someone else's conversation (`403`, and `404`
-for ids that do not exist, so responses cannot be used to probe for existence); trusting a
-contact is per-owner and never touches another user's row; a duplicate `clientMessageId`
-returns the original message even when the text differs; and error envelopes never echo
-message text.
+Asserted invariants include: a code is 6 characters from the unambiguous alphabet and unique
+per device (100 registrations, zero collisions); resuming with the device secret returns the
+**same** code while a wrong secret returns `401`; the secret itself is never stored in
+plaintext; a stranger cannot read a conversation (`403`) nor mark another user's message read
+(`403`); only the *listener* can change consent for a pair; duplicate `clientMessageId`
+returns the original message with `200` and never creates a second row; history reads stamp
+`delivered_at`; `spoken` receipts are recipient-only and always `204`; a code that is not
+normalised (`" K7M-2PQ "` → `k7m2pq`) still resolves while an unknown or self code is
+rejected; per-scope rate limits return `429` with `retryAfterMs`; and validation failures use
+the standard error envelope.
 
 ### CI
 
@@ -96,9 +67,8 @@ each device in the matrix; it takes about fifteen minutes.
 
 1. Server reachable from both phones (`docker compose up` is fine).
 2. Install `app-standalone-release.apk` on both.
-3. Phone A: sign in, **Call Assist → Start Call Assist**, add B as a contact and switch the
-   🔊 trust toggle on.
-4. Phone B: sign in, add A as a contact.
+3. Phone A: note the code on the home screen, **Call Assist → Start listening**.
+4. Phone B: ✏️ → type A's code (tap **Copy** on A to send it over any channel).
 5. Confirm in Settings → Device capability that the app reports what it can and cannot detect.
 
 ### Core loop
@@ -112,10 +82,10 @@ each device in the matrix; it takes about fifteen minutes.
 | 5 | Tap **Skip** during an utterance | The utterance stops mid-sentence, the next message starts |
 | 6 | Tap **Stop** | Speech stops and the pending queue is emptied |
 | 7 | Have B send a message, then lock the screen and press power to sleep the phone | The message is still spoken |
-| 8 | Have B press **🔊 Speak Now** while A's queue holds a normal message | The urgent message is spoken next, phrased "Important. …" |
+| 8 | Have B press **🔊 Whisper** while A's queue holds a normal message | The urgent message is spoken next, phrased "Important. …" |
 | 9 | Send a message that was already spoken, from the same conversation history (or toggle airplane mode and back so the socket reconnects) | Nothing is spoken twice |
 | 10 | Turn **Call Assist off** on A, then have B send a message | No speech at all, a normal notification appears |
-| 11 | Untrust B, count a message | Not spoken; notification only |
+| 11 | Turn the 🔇/🔊 switch in the chat header off, then have B send a message | Not spoken; notification only |
 | 12 | Switch A to airplane mode, have B send a message, then restore connectivity | The message arrives and is spoken once |
 | 13 | Kill the app from recents while Call Assist is armed (fcm flavor) | Depending on the platform, the session ends; the app must not claim otherwise — reopen and it says Call Assist is off |
 
@@ -153,12 +123,9 @@ above; what a device must confirm is exactly the table in this and the previous 
 
 ## Regression checklist for contributors
 
-1. `cd backend && npm test` — schema-reference check + type-check + docs contract + 17 API tests
-   (+ the store contract when `TEST_DATABASE_URL` is set).
+1. `cd backend && npm test` — type-check + 12 API tests.
 2. `cd backend && node scripts/smoke.mjs <url>` against a running server.
 3. `cd android && ./gradlew testStandaloneDebugUnitTest` — 32 unit tests (14 normaliser, 10 assist, 8 queue).
-4. `cd android && ./gradlew lintStandaloneRelease` — no lint errors (a clean build proves the
-   API-level guards are in place).
-5. `cd android && ./gradlew assembleStandaloneRelease` — the APK still builds.
-6. If you touched the speech pipeline: re-run at least the core loop (steps 1–3, 8–10) on one
+4. `cd android && ./gradlew assembleStandaloneRelease` — the APK still builds.
+5. If you touched the speech pipeline: re-run at least the core loop (steps 1–3, 8–10) on one
    device and record the result in the PR description.

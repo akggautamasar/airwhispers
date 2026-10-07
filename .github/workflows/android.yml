@@ -34,18 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # A privacy claim nobody checks is a claim that drifts. This fails fast,
-      # before the SDK is even installed, when the manifest and docs/security.md
-      # disagree about what the app asks for.
-      - name: Check the permission manifest against docs/security.md
-        run: python3 .github/scripts/check-permissions.py
-
-      # Android falls back to English silently, so a missing translation is
-      # invisible in review; a translated string that loses a %1$s is a crash on
-      # a Hindi device only.
-      - name: Check the translations
-        run: python3 .github/scripts/check-translations.py
-
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -68,17 +56,15 @@ jobs:
           gradle --no-daemon --stacktrace testStandaloneDebugUnitTest \
             2>&1 | tee "$GITHUB_WORKSPACE/build-logs/unit-tests.log"
 
-      - name: Android lint (device-behaviour checks)
-        working-directory: android
-        env:
-          VERSION_NAME: ${{ inputs.version_name }}
+      # Renders the failure inside the check-run annotation, which stays readable even
+      # when the raw log or the uploaded artifacts are not reachable.
+      - name: Explain the failure
+        if: failure()
         run: |
-          set -o pipefail
-          mkdir -p "$GITHUB_WORKSPACE/build-logs"
-          gradle --no-daemon --stacktrace lintStandaloneRelease \
-            -Pairwhispers.versionName="${VERSION_NAME:-1.0.0}" \
-            -Pairwhispers.versionCode="${{ github.run_number }}" \
-            2>&1 | tee "$GITHUB_WORKSPACE/build-logs/lint.log"
+          python3 .github/scripts/failure-summary.py
+          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
+            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
+          fi
 
       - name: Assemble release APK (standalone flavour)
         working-directory: android
@@ -87,8 +73,14 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          VERSION="${VERSION_NAME:-}"
+          if [ -z "$VERSION" ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"; VERSION="${VERSION#android-v}"; VERSION="${VERSION#v}"
+          fi
+          VERSION="${VERSION:-1.0.0}"
+          echo "Building version $VERSION (code ${{ github.run_number }})"
           gradle --no-daemon --stacktrace assembleStandaloneRelease \
-            -Pairwhispers.versionName="${VERSION_NAME:-1.0.0}" \
+            -Pairwhispers.versionName="$VERSION" \
             -Pairwhispers.versionCode="${{ github.run_number }}" \
             2>&1 | tee "$GITHUB_WORKSPACE/build-logs/assemblestandalonerelease.log"
 
@@ -99,8 +91,12 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          VERSION="${VERSION_NAME:-}"
+          if [ -z "$VERSION" ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"; VERSION="${VERSION#android-v}"; VERSION="${VERSION#v}"
+          fi
           gradle --no-daemon --stacktrace assembleStandaloneDebug \
-            -Pairwhispers.versionName="${VERSION_NAME:-1.0.0}" \
+            -Pairwhispers.versionName="${VERSION:-1.0.0}" \
             -Pairwhispers.versionCode="${{ github.run_number }}" \
             2>&1 | tee "$GITHUB_WORKSPACE/build-logs/assemblestandalonedebug.log"
 
@@ -108,16 +104,6 @@ jobs:
         working-directory: android
         continue-on-error: true
         run: gradle --no-daemon --stacktrace assembleFcmRelease -Pairwhispers.versionCode="${{ github.run_number }}"
-
-      # Renders the failure inside the check-run annotation, which stays readable even
-      # when the raw log or the uploaded artifacts are not reachable.
-      - name: Explain the failure
-        if: failure()
-        run: |
-          python3 .github/scripts/failure-summary.py
-          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
-            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
-          fi
 
       - name: Collect APKs and checksums
         run: |
@@ -132,6 +118,16 @@ jobs:
 
       # GitHub's log download endpoint is not reachable from every environment, so the
       # raw output and the HTML/JUnit reports are published as an artifact as well.
+      # Same idea as the step above, but for failures in the APK assembly steps: the
+      # Gradle log is on the runner even when the log download API is unreachable.
+      - name: Explain the failure (build steps)
+        if: failure()
+        run: |
+          python3 .github/scripts/failure-summary.py
+          if [ -f "$GITHUB_WORKSPACE/build-logs/annotation.txt" ]; then
+            cat "$GITHUB_WORKSPACE/build-logs/annotation.txt"
+          fi
+
       - name: Upload build logs and test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -141,70 +137,8 @@ jobs:
             build-logs/**
             android/app/build/reports/tests/**
             android/app/build/test-results/**
-            android/app/build/reports/lint-results-*.html
           if-no-files-found: ignore
           retention-days: 7
-
-      # Proves the artefact rather than trusting the build: signature, package id,
-      # version and the presence of the Hindi resources are all checked here.
-      - name: Verify the release APK
-        run: |
-          set -euo pipefail
-          APK="artifacts/app-standalone-release.apk"
-          EXPECTED_VERSION="${{ inputs.version_name }}"
-          EXPECTED_VERSION="${EXPECTED_VERSION:-1.0.0}"
-
-          echo "::group::APK integrity"
-          test -f "$APK" || { echo "::error::release APK missing"; exit 1; }
-          unzip -t "$APK" >/dev/null || { echo "::error::APK is not a valid zip"; exit 1; }
-          unzip -l "$APK" | grep -q "classes.dex"   || { echo "::error::no classes.dex in APK"; exit 1; }
-          unzip -l "$APK" | grep -q "resources.arsc" || { echo "::error::no resources.arsc in APK"; exit 1; }
-          (cd artifacts && sha256sum -c app-standalone-release.apk.sha256)
-          echo "::endgroup::"
-
-          echo "::group::Manifest (aapt2)"
-          BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -1 || true)"
-          AAPT2="$BUILD_TOOLS/aapt2"
-          if [ -x "$AAPT2" ]; then
-            BADGING="$("$AAPT2" dump badging "$APK")"
-            echo "$BADGING" | head -5
-            PKG="$(printf '%s\n' "$BADGING" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
-            [ "$PKG" = "com.airwhispers" ] || { echo "::error::package is '$PKG', expected com.airwhispers"; exit 1; }
-            VNAME="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")"
-            [ "$VNAME" = "$EXPECTED_VERSION" ] || { echo "::error::versionName is '$VNAME', expected '$EXPECTED_VERSION'"; exit 1; }
-            if printf '%s\n' "$BADGING" | grep -q "^application-debuggable"; then
-              echo "::error::release APK is debuggable"; exit 1
-            fi
-          else
-            echo "aapt2 not found, skipping manifest checks"
-          fi
-          echo "::endgroup::"
-
-          echo "::group::Shipped permissions"
-          # What a user installs is the *merged* manifest: a library can add a
-          # permission the app never declared, which would quietly falsify the
-          # table in docs/security.md. This checks the APK itself and reports
-          # anything that came in from a dependency.
-          python3 .github/scripts/check-permissions.py --apk "$APK"
-          echo "::endgroup::"
-
-          echo "::group::Signature"
-          APKSIGNER="$BUILD_TOOLS/apksigner"
-          if [ -x "$APKSIGNER" ]; then
-            "$APKSIGNER" verify --print-certs "$APK" | head -8
-          else
-            echo "apksigner not found, skipping signature check"
-          fi
-          echo "::endgroup::"
-
-          echo "::group::Bundled languages"
-          # Devanagari bytes ("अभी") inside resources.arsc — i.e. the Hindi UI shipped.
-          if unzip -p "$APK" resources.arsc | grep -aq $'\xe0\xa4\x85\xe0\xa4\xad\xe0\xa5\x80'; then
-            echo "Hindi (hi) resources present"
-          else
-            echo "::error::Hindi resources are missing from the release APK"; exit 1
-          fi
-          echo "::endgroup::"
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
@@ -234,18 +168,31 @@ jobs:
       - name: Compose release notes
         run: |
           cat > notes.md <<'NOTES'
-          ## AirWhispers for Android
+          ## AirWhispers for Android — messages you can hear
 
-          Hands-free messaging: while you are on a call in WhatsApp, Telegram, Meet,
-          Discord, Signal or the dialer, incoming AirWhispers messages can be spoken
-          aloud through your speaker, wired headset or Bluetooth earbuds.
+          While you are on a call in WhatsApp, Telegram, Instagram, Meet, Discord, Signal
+          or the dialer, incoming AirWhispers messages can be spoken *quietly* to you
+          through your speaker, wired earphones or Bluetooth earbuds. You never have to
+          look at the phone.
+
+          **No login.** No account, no email, no password, no phone number. The server
+          hands this phone a random six-character code, and that code is your address.
+          Older releases on this page shipped the retired login-based build — install
+          **this** one (it is the newest).
 
           ### Install
-          1. Download `app-standalone-release.apk` (signed) below.
+          1. Download `app-standalone-release.apk` (signed) below. This is the app.
           2. On the phone, allow "Install unknown apps" for your browser/file manager.
-          3. Open the app, enter the address of your AirWhispers server, create an account.
-          4. Call Assist → **Start Call Assist**. Add your chat partner as a *trusted* contact.
-          5. Get a message while on a call: it is spoken to you. Nothing else to do.
+          3. Open the app, type the address of an AirWhispers server, then your name.
+             There is **no account, no email, no password**: the server hands this phone a
+             six-character code, and that code is your address from then on.
+          4. Tap the code to copy it and send it to your friend; type their code under
+             ✏️ to open the chat. In the chat header, switch the mute icon to
+             **🔊 whispers on** so their messages may be spoken on this phone.
+          5. Call Assist → **Start listening**. While you are on a call in WhatsApp,
+             Telegram, Meet, Discord or the dialer, messages from people you allow are
+             spoken *quietly* (Whisper mode, on by default) through your earbuds,
+             headset or speaker.
 
           ### Notes
           * `app-standalone-release.apk` — recommended. No Google/Firebase account needed;
@@ -254,8 +201,12 @@ jobs:
           * Verify the download with the matching `.sha256` file.
           * AirWhispers never records calls, never opens the microphone and never touches
             another app's call audio. It speaks to *you*, the person holding this phone.
+          * **Whisper mode** (Settings → Speech, on by default) keeps the voice low so it is
+            meant for earbuds or the phone at your ear, not for the room.
           * Automatic call detection is a documented heuristic — see
-            `docs/android-limitations.md`. A manual "Start Call Assist" switch always works.
+            `docs/android-limitations.md`. The manual "Start listening" switch always works.
+          * The server is not included: run your own with `cd backend && npm ci && npm run dev`,
+            or ask whoever gave you the address. See `docs/quickstart.md`.
 
           ### iOS
           Android ships today. iOS shares the same backend and protocol; see

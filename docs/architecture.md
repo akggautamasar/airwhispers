@@ -47,14 +47,14 @@ platform constraints honest.
 | --- | --- | --- |
 | `config/ProductConfig.kt` | Single source of branding, feature flags and limits (`MAX_SPOKEN_CHARS`, `MAX_QUEUE_DEPTH`) | — |
 | `core/` | `AppLog` (redacting logger), `AppResult`/`AppError`, `Dispatchers` | — |
-| `data/model/` | Domain models: `Account`, `Contact`, `Message`, `Conversation`, `CallState`, `SpeechSettings` | core |
-| `data/remote/` | `ApiClient` (OkHttp, bearer auth, single-flight refresh, error mapping), `RealtimeClient` (WS relay with backoff + auth frames), `Dto` (wire contract) | model, core |
+| `data/model/` | Domain models: `Identity` (the device's code), `Peer`, `Message`, `Conversation`, `CallState`, `SpeechSettings` | core |
+| `data/remote/` | `ApiClient` (OkHttp, bearer auth, silent re-auth from the device secret, error mapping), `RealtimeClient` (WS relay with backoff + auth frames + typing frames), `Dto` (wire contract) | model, core |
 | `data/local/` | `LocalStore`: SQLite cache, durable outbox, and the `SpokenLedger` implementation (`UPDATE … WHERE spoken_at IS NULL`) | model |
-| `data/prefs/` | `SecretStore` (AndroidKeyStore AES/GCM for tokens), `SettingsStore` (observable settings, `normaliseBackendUrl`) | core |
+| `data/prefs/` | `SecretStore` (AndroidKeyStore AES/GCM for the access token **and the device secret**), `SettingsStore` (observable settings, cached code, `normaliseBackendUrl`) | core |
 | `domain/tts/` | `TextNormalizer`, `TtsQueue` (pure Kotlin, sequential, deduplicating), `SpeechSynthesizer` interface | model |
 | `domain/assist/` | `SpokenLedger` interface, `CallAssistEngine.evaluate()` — the speech decision pipeline | tts, model |
 | `service/` | `CallAssistService` (owns the FGS and the armed session), `CallAssistController` (UI/notification facade), `CallDetector`, `SpeechPlayer`, `AndroidTtsSynthesizer`, `AudioRouter`, `Notifier`, `BootCompletedReceiver`, `CallAssistTileService` | domain, data |
-| `ui/` | Compose UI: onboarding, chats, conversation, Call Assist dashboard, contacts, settings | data |
+| `ui/` | Compose UI: setup (server + name), chats, conversation, Call Assist dashboard, settings | data |
 | `push/` | `PushBridge` boundary + FCM implementation in the `fcm` flavor source set | — |
 
 **Layering rules.** `domain/` is pure Kotlin with no Android imports, which is what makes the
@@ -67,14 +67,14 @@ injected into it through small interfaces (`SpeechSynthesizer`, `SpokenLedger`, 
 | File | Responsibility |
 | --- | --- |
 | `config.ts` | Environment parsing with validation and safe defaults |
-| `crypto.ts` | scrypt password hashing/verification, JWT sign/verify, refresh-token hashing |
+| `crypto.ts` | code generation (unambiguous alphabet), scrypt hashing of device secrets, JWT sign/verify, FCM RS256 assertion |
 | `types.ts` | Domain types **and** the `Store` interface — the contract both stores implement |
 | `store.memory.ts` | In-memory store used by `npm run dev` and the test suite |
 | `store.pg.ts` | PostgreSQL store (same contract), used in production |
 | `validators.ts` | Hand-written request validation (no schema dependency), consistent error messages |
-| `realtime.ts` | WebSocket hub: auth frames, per-user sockets, conversation-scoped fan-out, heartbeats |
+| `realtime.ts` | WebSocket hub: auth frames, per-device sockets, conversation fan-out, presence fan-out, typing relay, heartbeats |
 | `push.ts` | Optional FCM HTTP v1 sender, service-account JWT, per-device failure pruning |
-| `app.ts` | All routes, auth guards, rate limits, error handler |
+| `app.ts` | All routes (device identity, chats, messages, consent, push), rate limits, error handler, demo console |
 | `server.ts` | Process bootstrap, graceful shutdown |
 
 The store interface is the seam that makes the whole API testable in-process: `app.ts`
@@ -95,8 +95,9 @@ Compose  → repository.sendMessage()
 
 If the network is down the message stays in the outbox and is retried on reconnect or on the
 next app start; the `clientMessageId` is generated once, before the first attempt, so retries
-can never duplicate. "Speak Now" sets `priority: SPEAK_NOW` — the fast-path button gets an
-instant local echo *and* a high-priority send.
+can never duplicate. "Whisper" sets `priority: SPEAK_NOW` — a *request* to the recipient's
+Call Assist to speak it immediately; the recipient's own consent still decides (it is
+surfaced to the sender as `speakEligible`).
 
 ### Receiving and deciding to speak
 
@@ -108,7 +109,7 @@ WS frame (or FCM → PushBridge → repository.ingest(...))
        1. is it mine?                 → no
        2. Call Assist enabled?        → no  (hard gate)
        3. onlyDuringCalls && no call? → no
-       4. sender trusted?             → no  (Everyone / Contacts only / Selected)
+       4. sender allowed by me?       → no  (per-peer consent switch, default deny)
        5. speakable text?             → no  (empty after normalisation)
        6. queue has room?             → no  (MAX_QUEUE_DEPTH)
        7. SpokenLedger.claim(id)      → ALREADY_SPOKEN / UNKNOWN → no
@@ -145,11 +146,7 @@ the speech pipeline, backend or tests refers to the brand.
 Localisation:
 
 * `values/strings.xml` (English) and `values-hi/strings.xml` (Hindi) carry identical key sets —
-  139 strings each, checked in CI (`.github/scripts/check-translations.py`), which also fails when a
-  translation loses or renames a format argument (`%1$s`), a mistake Android reports only on a
-  device set to that language. Screens read them with
-  `stringResource(...)`; the only hard-coded text left in the UI is decoration (arrows,
-  emoji glyphs) and URLs.
+  98 strings each, checked by comparing the two files.
 * `res/xml/locales_config.xml` declares `en` and `hi` and is referenced from the manifest
   (`android:localeConfig`), so Android 13+ offers *Settings → Apps → AirWhispers → Language*.
 * The **interface** language and the **speech** language are deliberately separate settings: a
@@ -165,13 +162,16 @@ other so the client can cache everything it needs:
 
 | Table | Purpose | Notable columns |
 | --- | --- | --- |
-| `users` | Accounts | `email` (unique, lowercased), `password_hash` (scrypt), `display_name` |
-| `refresh_tokens` | Rotating sessions | `token_hash`, `expires_at`, `rotated_at`, `revoked_at`, `device_id` |
+| `users` | **One row per device identity** | `code` (unique, lowercase, unambiguous alphabet), `display_name` |
+| `device_credentials` | Why there is no login | `(device_id, user_id)` key, `secret_hash` (scrypt), `last_seen_at` |
 | `conversations` / `conversation_members` | 1-to-1 conversations (groups are additive later) | `pair_key` unique, `last_message_at` |
 | `messages` | Messages | `client_message_id` + `UNIQUE(sender_id, client_message_id)`, `priority`, `delivered_at`, `read_at`, `spoken_at` |
-| `contacts` | Trust graph | `owner_id`, `contact_id`, `is_trusted` (default **false**) |
-| `user_settings` | Per-user speech defaults | `speak_messages`, `only_during_calls`, `trusted_contacts_only`, `prefer_bluetooth`, `language_tag`, `speech_rate`, `speech_pitch`, `emoji_mode` |
-| `devices` | Push targets | `platform`, `push_token`, `last_seen_at` |
+| `trusts` | Speech consent, owned by the listener | `owner_user_id`, `peer_user_id`, `trusted` (default **false**) |
+| `devices` | Optional push targets | `platform`, `push_token`, `last_seen_at` |
+
+Speech settings are deliberately **not** on the server: voices, rates and outputs differ per
+phone, so they live only in `SettingsStore`, and the server knows exactly one social fact per
+pair — "this owner lets that peer whisper to them".
 
 Timestamps are epoch milliseconds everywhere (API, database, client) — one representation,
 no timezone ambiguity. IDs are UUID strings.
@@ -181,9 +181,11 @@ no timezone ambiguity. IDs are UUID strings.
 * The app trusts only its own server, over TLS (a documented LAN exception exists for
   development; see `network_security_config.xml`).
 * The server authorizes every request per resource: conversation membership for reads and
-  sends, recipient identity for read/spoken receipts, ownership for contact edits.
-* The client stores tokens encrypted with a non-exportable Android Keystore key; the
-  backend stores refresh tokens only as SHA-256 hashes.
+  sends, recipient identity for read/spoken receipts, listener ownership for consent changes.
+* The client keeps the access token and the device secret behind a non-exportable Android
+  Keystore key; the backend stores device secrets only as scrypt hashes.
+* Speech consent is asserted by the *listener's* device, so a compromised sender can never
+  force audio on someone else's phone.
 * Message bodies are never logged by either side (see `AppLog` and the backend's log level
   discipline).
 
@@ -197,10 +199,6 @@ GitHub Actions ──▶ release APK ──▶ GitHub Release (with SHA-256 chec
 
 docker compose up   →  postgres:16 + airwhispers-backend (built from backend/Dockerfile)
 ```
-
-CI gates on: TypeScript type-check, backend API tests, a live smoke test, Android unit tests,
-**Android lint with `abortOnError`** (permission and API-level correctness) and both APK
-builds. Nothing reaches a release without all of them passing.
 
 Production checklist: `JWT_SECRET` (≥ 32 random bytes), `DATABASE_URL`, TLS-terminating
 reverse proxy, `TRUST_PROXY=true` so rate limiting sees real client IPs, `PUSH_INCLUDES_CONTENT=false`

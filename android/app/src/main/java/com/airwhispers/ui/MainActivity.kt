@@ -16,18 +16,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import com.airwhispers.AirWhispersApplication
-import com.airwhispers.data.repo.SessionStatus
+import com.airwhispers.data.repo.IdentityStatus
 import com.airwhispers.service.CallAssistService
 import com.airwhispers.service.Notifier
 import com.airwhispers.ui.screens.CallAssistScreen
 import com.airwhispers.ui.screens.ChatScreen
-import com.airwhispers.ui.screens.ContactsScreen
 import com.airwhispers.ui.screens.HomeScaffold
 import com.airwhispers.ui.screens.OnboardingScreen
 import com.airwhispers.ui.screens.SettingsScreen
@@ -96,10 +90,10 @@ private fun AppRoot(
     // Notifications are how the user learns about a message we could not speak.
     RequestNotificationPermission()
 
-    when {
-        session.status == SessionStatus.UNKNOWN -> SplashScreen()
-        session.status == SessionStatus.SIGNED_OUT -> OnboardingScreen(viewModel)
-        else -> when (val current = screen) {
+    when (session.status) {
+        // No identity yet: ask for a server and a name, then hand out the code.
+        IdentityStatus.SETUP -> OnboardingScreen(viewModel)
+        IdentityStatus.READY -> when (val current = screen) {
             is Screen.Chat -> ChatScreen(
                 viewModel = viewModel,
                 conversationId = current.conversationId,
@@ -123,9 +117,3 @@ private fun RequestNotificationPermission() {
     LaunchedEffect(Unit) { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }
 }
 
-@Composable
-private fun SplashScreen() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator()
-    }
-}

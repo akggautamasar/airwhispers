@@ -1,7 +1,6 @@
 package com.airwhispers.service
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -90,23 +89,11 @@ class Notifier(private val context: Context) {
         return builder.build()
     }
 
-    /**
-     * Every notification goes through here.
-     *
-     * Posting on Android 13+ without POST_NOTIFICATIONS throws, so callers check
-     * [canNotify] first; a notification is never important enough to crash the app,
-     * hence the belt-and-braces `runCatching`. Lint cannot see through [canNotify],
-     * so the permission suppression lives here — in exactly one place — rather than
-     * being scattered over four call sites.
-     */
-    @SuppressLint("MissingPermission")
-    private fun notifySafely(id: Int, notification: Notification) {
-        runCatching { manager.notify(id, notification) }
-    }
-
     fun showMessage(id: String, message: Message, senderName: String, silent: Boolean) {
         if (!canNotify()) return
-        notifySafely(id.hashCode(), messageNotification(message, senderName, silent))
+        runCatching {
+            manager.notify(id.hashCode(), messageNotification(message, senderName, silent))
+        }
     }
 
     fun callAssistNotification(
@@ -141,7 +128,7 @@ class Notifier(private val context: Context) {
     }
 
     fun postCallAssist(notification: Notification) {
-        if (canNotify()) notifySafely(CALL_ASSIST_NOTIFICATION_ID, notification)
+        if (canNotify()) runCatching { manager.notify(CALL_ASSIST_NOTIFICATION_ID, notification) }
     }
 
     fun problem(title: String, body: String) {
@@ -155,7 +142,7 @@ class Notifier(private val context: Context) {
             .setContentIntent(openAppIntent())
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
-        notifySafely(PROBLEM_NOTIFICATION_ID, notification)
+        runCatching { manager.notify(PROBLEM_NOTIFICATION_ID, notification) }
     }
 
     fun clearCallAssist() = manager.cancel(CALL_ASSIST_NOTIFICATION_ID)
@@ -182,7 +169,7 @@ class Notifier(private val context: Context) {
             .setAutoCancel(true)
             .setContentIntent(pending)
             .build()
-        notifySafely(BOOT_NOTIFICATION_ID, notification)
+        runCatching { manager.notify(BOOT_NOTIFICATION_ID, notification) }
     }
 
     private fun openAppIntent(extraConversationId: String? = null): PendingIntent {

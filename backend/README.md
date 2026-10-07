@@ -1,125 +1,95 @@
 # AirWhispers backend
 
-Node 22 (>= 22.6, for `--experimental-strip-types`) + TypeScript + Fastify. Stores messages
-in PostgreSQL for production, or in memory for development and tests. Sends realtime events over WebSocket and optional push through
-Firebase Cloud Messaging (HTTP v1, no Google SDK required).
+A small Node 22 + TypeScript + Fastify service that hands devices their codes and relays
+messages between them in realtime (REST + WebSocket).
 
-## Quick start
+* **No accounts.** A device registers once, gets a 6-character code and a device secret
+  (stored as an scrypt hash). The secret buys fresh access tokens forever, with no login UI.
+* **Two stores.** In-memory for `npm run dev` (zero infrastructure, resets on restart) and
+  PostgreSQL for anything permanent.
+* **Optional push.** FCM (HTTP v1) is used only for the `fcm` Android flavor and only when
+  the recipient has no open socket.
+
+## Run it
 
 ```bash
 npm ci
-npm run dev            # in-memory store, no database needed, listens on :8080
+npm run dev            # in-memory store + demo console on http://localhost:8080/
+npm test               # type-check + 20 API tests + build
+node scripts/smoke.mjs # live end-to-end check against a running server
 ```
+
+Production:
 
 ```bash
-npm test               # schema check + type-check + API tests (node:test) + build
-npm run build          # -> dist/
-npm start              # runs dist/src/server.js
+export DATABASE_URL=postgres://user:pass@host:5432/airwhispers
+export JWT_SECRET=$(openssl rand -base64 48)
+npm ci && npm run schema && npm start
+# or, from the repository root:
+docker compose up --build
 ```
 
-### Verify the PostgreSQL store (recommended before deploying)
+## The browser test console
 
-The API tests run against the in-memory store. The production store is verified by a
-separate contract test that needs a real database:
-
-```bash
-docker compose up -d postgres                 # or any PostgreSQL 14+
-export TEST_DATABASE_URL=postgres://airwhispers:airwhispers@localhost:5432/airwhispers
-npm run schema                                # creates the tables if missing
-npm test                                      # runs the store contract too
-```
-
-Without `TEST_DATABASE_URL` that suite skips and says so; CI runs it in the `postgres`
-job against a `postgres:16` service container. `npm run check:schema` additionally proves
-that every table and column named in `src/store.pg.ts` exists in `sql/schema.sql`, and
-runs on every `npm test` with no database at all.
-
-Against a running server:
-
-```bash
-node scripts/smoke.mjs http://127.0.0.1:8080
-```
-
-The smoke test registers two users, opens a WebSocket, sends a message, marks it read and
-spoken, and prints a line per check — it is the fastest way to confirm a deployment is sane.
+`GET /` (and `GET /demo`) serves `public/index.html` — a single static page that speaks the
+same public API as the Android app. Two browser tabs are two devices: each gets a code, you
+pair them by code, chat in realtime, toggle "let them whisper to me", and *Whisper now*
+messages are spoken locally so you can see the whole flow without a phone. It is a test
+bench, not a second product.
 
 ## Configuration
 
-Copy `.env.example` → `.env` (loaded with `--env-file` in `npm run dev`) or set real
-environment variables.
-
-| Variable | Default | Notes |
+| Variable | Default | Meaning |
 | --- | --- | --- |
-| `PORT` | `8080` | |
-| `HOST` | `0.0.0.0` | |
-| `DATABASE_URL` | *(unset)* | Unset ⇒ in-memory store (dev only, data is lost on restart) |
-| `JWT_SECRET` | *(dev fallback)* | **Required in production**, ≥ 32 characters; the server refuses to start with a short secret when `NODE_ENV=production` |
-| `ACCESS_TOKEN_TTL_SECONDS` | `900` | |
-| `REFRESH_TOKEN_TTL_DAYS` | `60` | |
-| `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy so rate limits use the real client IP |
-| `LOG_LEVEL` | `info` | `debug`…`fatal` |
-| `PUSH_INCLUDES_CONTENT` | `false` | Keep `false` unless you want message text inside push payloads (it then travels through Google's infrastructure) |
-| `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, `FCM_PRIVATE_KEY` | *(unset)* | From a Firebase service account. All three unset ⇒ push disabled, sockets only |
-
-## Run with PostgreSQL
-
-```bash
-createdb airwhispers
-
-DATABASE_URL=postgres://user:pass@localhost:5432/airwhispers \
-JWT_SECRET="$(openssl rand -base64 48)" \
-npm run schema      # applies sql/schema.sql idempotently
-npm start
-```
-
-Or with Docker:
-
-```bash
-docker compose up -d --build      # postgres + backend
-docker compose logs -f backend
-```
-
-## Deploy checklist
-
-1. `JWT_SECRET` set to a fresh random value (`openssl rand -base64 48`).
-2. `DATABASE_URL` pointing at a managed Postgres; `npm run schema` run once per deploy.
-3. TLS terminated in front of the process; `TRUST_PROXY=true`.
-4. Health probe on `GET /healthz` (the Dockerfile already declares it).
-5. Rate limits reviewed (`register` 10/min, `login` 20/min, `refresh` 60/min, `send` 120/min
-   per IP/user) — raise them only with an explanation.
-6. Logs checked for the absence of message bodies and tokens (they never appear by design).
+| `PORT` / `HOST` | `8080` / `0.0.0.0` | Listen address |
+| `DATABASE_URL` | *(unset)* | Postgres; without it the in-memory store is used |
+| `JWT_SECRET` | dev fallback | **Required in production** (≥ 32 chars) |
+| `ACCESS_TOKEN_TTL_SECONDS` | `3600` | Access token lifetime; refresh is silent |
+| `ALLOW_NEW_DEVICES` | `true` | `false` closes registration; existing devices keep working |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | *(unset)* | Enables FCM push (one-line JSON) |
+| `FCM_PROJECT_ID` | *(unset)* | Overrides the project id in the service account |
+| `PUSH_INCLUDES_CONTENT` | `false` | Send message text in the push payload (off by default) |
+| `TRUST_PROXY` | `false` | Trust `X-Forwarded-For` (only behind a known proxy) |
+| `LOG_LEVEL` | `debug`/`info` | Fastify log level; message bodies are never logged |
 
 ## Layout
 
 ```
 src/
-  config.ts        env parsing, validation and defaults
-  crypto.ts        scrypt hashing, JWT sign/verify, refresh-token hashing
-  types.ts         domain types + the Store interface both stores implement
-  store.memory.ts  in-memory store (dev + tests)
-  store.pg.ts      PostgreSQL store
-  validators.ts    request validation helpers
-  realtime.ts      WebSocket hub (auth frames, per-user sockets, heartbeats)
-  push.ts          optional FCM HTTP v1 sender
-  app.ts           routes, auth guards, rate limits, error envelope
-  server.ts        bootstrap + graceful shutdown
-sql/schema.sql     full schema, safe to re-run
-tests/api.test.ts  API, authorization and idempotency tests
-scripts/           apply-schema.ts, smoke.mjs
+  app.ts            every HTTP route + the realtime-server wiring, in one auditable file
+  config.ts         environment → typed config with safe defaults
+  crypto.ts         scrypt secret hashing, HS256 tokens, code generation, FCM assertion
+  validators.ts     validation + the error classes the error handler maps to statuses
+  types.ts          domain types and the Store contract (memory | pg)
+  store.memory.ts   in-memory store (dev, tests, single-node demos)
+  store.pg.ts       PostgreSQL store (production)
+  realtime.ts       WebSocket hub: auth, presence fan-out, typing relay, heartbeat
+  push.ts           FCM HTTP v1 sender (data-only messages, no Google SDK)
+  server.ts         wiring, logging, graceful shutdown
+public/index.html   the browser test console
+sql/schema.sql      PostgreSQL schema (no email, no password, no settings tables)
+tests/api.test.ts   20 end-to-end tests over the in-memory store
+scripts/smoke.mjs   live end-to-end script (two devices, socket, consent, receipts)
 ```
 
-## Behaviour worth remembering
+## Data model, briefly
 
-* `POST /conversations/:id/messages` is **idempotent per `(sender, clientMessageId)`**: a
-  retry returns `200` with the original message instead of creating a second one, and
-  fan-out happens only on the `201`.
-* `POST /messages/:id/spoken` always answers `204`, even for an empty body — it is
-  best-effort telemetry and must never cause a client retry storm.
-* Receipts are recipient-only; anything else is `403`.
-* New contacts default to `isTrusted: false`.
-* The in-memory store and the Postgres store are interchangeable and are held to the same
-  contract, which is why `npm test` needs no database.
+```
+users(id, code UNIQUE, display_name, created_at)
+device_credentials(device_id, user_id, secret_hash, platform, app_version,
+                   created_at, last_seen_at)            -- PK (device_id, user_id)
+conversations(id, pair_key UNIQUE, created_at)
+conversation_members(conversation_id, user_id)
+messages(id, client_message_id, conversation_id, sender_id, recipient_id, text,
+         priority, created_at, delivered_at, read_at, spoken_at)
+         UNIQUE (sender_id, client_message_id)          -- idempotent sends
+trusts(owner_user_id, peer_user_id, trusted, created_at, updated_at)
+devices(device_id, user_id, platform, push_token, app_version, updated_at)
+```
 
-Full REST and WebSocket reference: [`../docs/api.md`](../docs/api.md). Security model:
-[`../docs/security.md`](../docs/security.md). Architecture:
-[`../docs/architecture.md`](../docs/architecture.md).
+Speech settings live only on the phone (voices differ per device); the server stores
+exactly one social fact per pair — "this owner lets that peer whisper to them" — and it is
+owned by the listener.
+
+See [../docs/api.md](../docs/api.md) for the full API and
+[../docs/quickstart.md](../docs/quickstart.md) for the end-to-end walkthrough.

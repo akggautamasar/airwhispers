@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AirWhispers — server test console</title>
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #121924; --panel-2: #0e141d; --line: #1f2a38;
+    --text: #e6edf3; --muted: #8b98a9; --accent: #4ade80; --accent-2: #38bdf8;
+    --warn: #fbbf24; --danger: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; letter-spacing: .2px; }
+  header .tag { font-size: 12px; color: var(--muted); }
+  .code-chip {
+    margin-left: auto; display: flex; align-items: center; gap: 10px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 8px 6px 14px;
+  }
+  .code-chip .label { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+  .code-chip code {
+    font: 700 20px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .22em; color: var(--accent);
+  }
+  button {
+    font: inherit; font-size: 13px; color: var(--text); background: #1b2532;
+    border: 1px solid var(--line); border-radius: 9px; padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { background: #223041; }
+  button.primary { background: var(--accent); color: #06240f; border-color: transparent; font-weight: 700; }
+  button.primary:hover { background: #34d399; }
+  button.ghost { background: transparent; }
+  main { flex: 1; display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+  aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .aside-head { padding: 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+  .aside-head input, .composer input, .aside-head select {
+    width: 100%; font: inherit; font-size: 14px; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px;
+  }
+  .chat-list { overflow-y: auto; }
+  .chat-item {
+    display: flex; gap: 10px; align-items: center; padding: 12px 14px; cursor: pointer;
+    border-bottom: 1px solid rgba(31,42,56,.5);
+  }
+  .chat-item.active { background: #16202c; }
+  .chat-item .who { flex: 1; min-width: 0; }
+  .chat-item .name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .chat-item .preview { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #475569; flex: none; }
+  .dot.online { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  section.room { display: flex; flex-direction: column; min-height: 0; }
+  .room-head {
+    display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line);
+    background: var(--panel); flex-wrap: wrap;
+  }
+  .room-head .grow { flex: 1; }
+  .switch { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .switch input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .bubble { max-width: min(640px, 78%); padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
+  .bubble.mine { align-self: flex-end; background: #14432c; border: 1px solid #1d5c3c; }
+  .bubble.theirs { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
+  .bubble .meta { margin-top: 5px; font-size: 11px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 10px; letter-spacing: .04em; }
+  .pill.speak { color: var(--accent); border-color: #1d5c3c; }
+  .pill.spoken { color: var(--accent-2); border-color: #1e4a63; }
+  .composer { border-top: 1px solid var(--line); padding: 12px; display: flex; gap: 10px; align-items: center; background: var(--panel); }
+  .composer input { flex: 1; }
+  .empty { margin: auto; color: var(--muted); text-align: center; max-width: 460px; }
+  .empty h2 { color: var(--text); font-size: 17px; margin-bottom: 6px; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #1b2532; border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; font-size: 13px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+  .toast.show { opacity: 1; }
+  .speak-flash { animation: flash 1.1s ease-out; }
+  @keyframes flash { from { box-shadow: 0 0 0 0 rgba(74,222,128,.6); } to { box-shadow: 0 0 0 14px rgba(74,222,128,0); } }
+  .status { font-size: 12px; color: var(--muted); }
+  .status.live { color: var(--accent); }
+  footer { padding: 8px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } aside { border-right: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>AirWhispers</h1>
+  <span class="tag">server test console — no login, just codes</span>
+  <span class="status" id="status">connecting…</span>
+  <div class="code-chip">
+    <span class="label">your code</span>
+    <code id="my-code">······</code>
+    <button class="ghost" id="copy-code" title="Copy code">Copy</button>
+  </div>
+  <button class="ghost" id="rename" title="Change the name others see">Rename</button>
+  <button class="ghost" id="new-code" title="Forget this identity and get a new code">New code</button>
+</header>
+
+<main>
+  <aside>
+    <div class="aside-head">
+      <input id="peer-code" placeholder="Enter a friend's code (e.g. k7m 2pq)" autocomplete="off" spellcheck="false" />
+      <button class="primary" id="open-chat">Start chat</button>
+    </div>
+    <div class="chat-list" id="chat-list"></div>
+  </aside>
+  <section class="room">
+    <div class="room-head">
+      <div class="grow">
+        <div id="room-name" style="font-weight:600">No chat open</div>
+        <div id="room-code" class="status"></div>
+      </div>
+      <label class="switch" title="Allow this person's messages to be spoken on this device">
+        <input type="checkbox" id="allow-speak" disabled /> let them whisper to me
+      </label>
+    </div>
+    <div class="messages" id="messages">
+      <div class="empty">
+        <h2>Two tabs, two codes, one conversation</h2>
+        <p>Open this page in a second browser tab or on another device, put the code shown there into the
+        “Enter a friend's code” box, and start talking. Messages arrive instantly over the WebSocket.</p>
+        <p>Turn on <b>let them whisper to me</b> and their “whisper now” messages are the ones a phone
+        would speak aloud through Call Assist — quietly, while you are on a call in another app.</p>
+      </div>
+    </div>
+    <div class="composer">
+      <input id="text" placeholder="Write a message…" autocomplete="off" />
+      <label class="switch" title="Ask the other phone to speak this immediately">
+        <input type="checkbox" id="whisper-now" /> whisper now
+      </label>
+      <button class="primary" id="send">Send</button>
+    </div>
+  </section>
+</main>
+<footer id="footer">Tip: this console uses the same API as the Android app. It is a test bench, not the product.</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const API = "/api/v1";
+const store = {
+  deviceId: localStorage.getItem("aw.deviceId"),
+  secret: localStorage.getItem("aw.deviceSecret"),
+};
+if (!store.deviceId) {
+  store.deviceId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+  localStorage.setItem("aw.deviceId", store.deviceId);
+}
+
+const state = { me: null, token: null, chats: [], messages: {}, openId: null, socket: null, retry: 0 };
+
+const el = (id) => document.getElementById(id);
+const toast = (message) => {
+  const node = el("toast");
+  node.textContent = message;
+  node.classList.add("show");
+  clearTimeout(node._t);
+  node._t = setTimeout(() => node.classList.remove("show"), 2600);
+};
+const groupCode = (code) => (code || "").toUpperCase().replace(/(.{3})(.{3})/, "$1 $2");
+
+async function api(method, path, body, authenticated = true) {
+  const headers = { "Content-Type": "application/json" };
+  if (authenticated && state.token) headers.authorization = `Bearer ${state.token}`;
+  const response = await fetch(API + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (response.status === 204) return null;
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload?.error?.message || `Request failed (${response.status})`);
+    error.status = response.status;
+    error.code = payload?.error?.code;
+    throw error;
+  }
+  return payload;
+}
+
+/** First run: get a code. Every later run: prove the secret and continue. */
+async function bootstrap() {
+  const payload = { deviceId: store.deviceId, platform: "web", appVersion: "console" };
+  if (store.secret) payload.deviceSecret = store.secret;
+  const result = await api("POST", "/device/register", payload, false);
+  if (result.deviceSecret) {
+    store.secret = result.deviceSecret;
+    localStorage.setItem("aw.deviceSecret", store.secret);
+  }
+  state.me = result.user;
+  state.token = result.tokens.accessToken;
+  el("my-code").textContent = groupCode(state.me.code);
+  document.title = `AirWhispers ${groupCode(state.me.code)}`;
+  connect();
+  await refreshChats();
+}
+
+async function refreshChats() {
+  const result = await api("GET", "/conversations");
+  state.chats = result.conversations;
+  renderChats();
+}
+
+function renderChats() {
+  const list = el("chat-list");
+  list.innerHTML = "";
+  if (!state.chats.length) {
+    const empty = document.createElement("div");
+    empty.className = "preview";
+    empty.style.padding = "14px";
+    empty.textContent = "No chats yet. Enter a friend's code above.";
+    list.append(empty);
+    return;
+  }
+  for (const chat of state.chats) {
+    const item = document.createElement("div");
+    item.className = "chat-item" + (chat.id === state.openId ? " active" : "");
+    const preview = chat.lastMessage ? chat.lastMessage.text : "No messages yet";
+    item.innerHTML = `
+      <span class="dot ${chat.peer.online ? "online" : ""}"></span>
+      <div class="who">
+        <div class="name">${escapeHtml(chat.peer.displayName)}${chat.youAllowSpeak ? ' <span class="pill speak">🔊</span>' : ""}</div>
+        <div class="preview">${escapeHtml(preview)}</div>
+      </div>`;
+    item.onclick = () => openChat(chat.id);
+    list.append(item);
+  }
+}
+
+function currentChat() {
+  return state.chats.find((chat) => chat.id === state.openId) || null;
+}
+
+async function openChat(id) {
+  state.openId = id;
+  const chat = currentChat();
+  el("room-name").textContent = chat ? chat.peer.displayName : "No chat open";
+  el("room-code").textContent = chat ? `their code ${groupCode(chat.peer.code)} · ${chat.peer.online ? "online" : "offline"}` : "";
+  el("allow-speak").disabled = !chat;
+  el("allow-speak").checked = Boolean(chat?.youAllowSpeak);
+  renderChats();
+  if (!state.messages[id]) {
+    const result = await api("GET", `/conversations/${id}/messages`);
+    state.messages[id] = result.messages;
+  }
+  for (const message of state.messages[id] || []) {
+    if (!message.readStatus || message.readStatus === "read") continue;
+    if (message.recipientId !== state.me.id) continue;
+    api("POST", `/messages/${message.id}/read`).catch(() => {});
+  }
+  renderMessages();
+}
+
+function renderMessages() {
+  const box = el("messages");
+  const chat = currentChat();
+  const list = (state.messages[state.openId] || []).slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  box.innerHTML = "";
+  if (!chat) {
+    box.innerHTML = document.querySelector("template#placeholder") ? "" :
+      `<div class="empty"><h2>Two tabs, two codes, one conversation</h2>
+       <p>Enter a friend's code on the left to start. Everything travels through this server over the WebSocket.</p></div>`;
+    return;
+  }
+  for (const message of list) {
+    const mine = message.senderId === state.me.id;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble " + (mine ? "mine" : "theirs");
+    const time = new Date(message.createdAt).toLocaleTimeString();
+    const pills = [];
+    if (message.speakEligible) pills.push('<span class="pill speak">whisper allowed</span>');
+    if (message.priority === "SPEAK_NOW") pills.push('<span class="pill speak">whisper now</span>');
+    if (message.spoken) pills.push('<span class="pill spoken">spoken on their phone</span>');
+    if (mine) pills.push(`<span class="pill">${message.readStatus}</span>`);
+    bubble.innerHTML = `${escapeHtml(message.text)}<div class="meta"><span>${time}</span>${pills.join("")}</div>`;
+    if (!mine && message.priority === "SPEAK_NOW" && message.speakEligible) {
+      bubble.classList.add("speak-flash");
+      if (state.openId === message.conversationId) whisperLocally(message);
+    }
+    box.append(bubble);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+/** Stand-in for what the Android Call Assist service does: read it out quietly. */
+function whisperLocally(message) {
+  if (!("speechSynthesis" in window)) return;
+  const utterance = new SpeechSynthesisUtterance(message.text);
+  utterance.volume = 0.4;
+  utterance.rate = 1.05;
+  speechSynthesis.speak(utterance);
+  toast("🔊 whispered here (Call Assist would speak this on your phone)");
+}
+
+async function send() {
+  const input = el("text");
+  const text = input.value.trim();
+  if (!text || !state.openId) return;
+  const clientMessageId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+  input.value = "";
+  try {
+    const result = await api("POST", `/conversations/${state.openId}/messages`, {
+      clientMessageId,
+      text,
+      priority: el("whisper-now").checked ? "SPEAK_NOW" : "NORMAL",
+    });
+    remember(result.message);
+    renderMessages();
+    refreshChats();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function remember(message) {
+  const list = state.messages[message.conversationId] || [];
+  if (!list.some((m) => m.id === message.id)) list.push(message);
+  state.messages[message.conversationId] = list;
+}
+
+// ---------------------------------------------------------------- realtime
+
+function connect() {
+  if (state.socket) state.socket.close();
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  const socket = new WebSocket(`${scheme}://${location.host}${API}/realtime`);
+  state.socket = socket;
+
+  socket.onopen = () => {
+    el("status").textContent = "connected";
+    el("status").className = "status live";
+    state.retry = 0;
+    socket.send(JSON.stringify({ type: "auth", data: { accessToken: state.token, deviceId: store.deviceId } }));
+    setInterval(() => socket.readyState === 1 && socket.send(JSON.stringify({ type: "ping" })), 25000);
+  };
+  socket.onmessage = (event) => {
+    let frame;
+    try { frame = JSON.parse(event.data); } catch { return; }
+    handleFrame(frame);
+  };
+  socket.onclose = () => {
+    el("status").textContent = "reconnecting…";
+    el("status").className = "status";
+    const wait = Math.min(15000, 800 * Math.pow(2, state.retry++));
+    setTimeout(connect, wait);
+  };
+}
+
+function handleFrame(frame) {
+  switch (frame.type) {
+    case "message.created": {
+      const message = frame.data;
+      remember(message);
+      if (message.conversationId === state.openId) renderMessages();
+      refreshChats();
+      if (message.recipientId === state.me.id) {
+        const chat = state.chats.find((c) => c.id === message.conversationId);
+        if (chat && !chat.youAllowSpeak) toast(`${chat.peer.displayName}: ${message.text}`);
+      }
+      break;
+    }
+    case "message.updated": {
+      const message = frame.data;
+      const list = state.messages[message.conversationId] || [];
+      state.messages[message.conversationId] = list.map((m) => (m.id === message.id ? message : m));
+      if (message.conversationId === state.openId) renderMessages();
+      break;
+    }
+    case "message.read":
+      refreshChats();
+      break;
+    case "conversation.updated":
+    case "peer.updated":
+      if (frame.data?.userId === state.me.id) {
+        if (typeof frame.data.displayName === "string") state.me.displayName = frame.data.displayName;
+      }
+      refreshChats();
+      break;
+    case "presence.updated": {
+      const chat = state.chats.find((c) => c.peer.id === frame.data.userId);
+      if (chat) chat.peer.online = frame.data.online;
+      renderChats();
+      if (state.openId) openChatPreserve();
+      break;
+    }
+    case "typing": {
+      const chat = state.chats.find((c) => c.id === frame.data.conversationId);
+      if (chat && frame.data.conversationId === state.openId) toast(`${chat.peer.displayName} is typing…`);
+      break;
+    }
+    case "auth.required":
+      socket();
+      break;
+  }
+}
+
+function openChatPreserve() {
+  const chat = currentChat();
+  if (!chat) return;
+  el("room-name").textContent = chat.peer.displayName;
+  el("room-code").textContent = `their code ${groupCode(chat.peer.code)} · ${chat.peer.online ? "online" : "offline"}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ------------------------------------------------------------------ controls
+
+el("open-chat").onclick = async () => {
+  const code = el("peer-code").value;
+  if (!code.trim()) return;
+  try {
+    const result = await api("POST", "/conversations", { code });
+    el("peer-code").value = "";
+    await refreshChats();
+    await openChat(result.conversation.id);
+  } catch (error) {
+    toast(error.message);
+  }
+};
+el("peer-code").addEventListener("keydown", (event) => { if (event.key === "Enter") el("open-chat").click(); });
+el("send").onclick = send;
+el("text").addEventListener("keydown", (event) => { if (event.key === "Enter") send(); });
+el("allow-speak").onchange = async (event) => {
+  if (!state.openId) return;
+  try {
+    await api("PATCH", `/conversations/${state.openId}/trust`, { trusted: event.target.checked });
+    await refreshChats();
+    toast(event.target.checked ? "They can whisper to this device now" : "Whispers from them are muted here");
+  } catch (error) {
+    toast(error.message);
+  }
+};
+el("copy-code").onclick = async () => {
+  try { await navigator.clipboard.writeText(state.me.code); toast("Code copied"); }
+  catch { toast(`Your code is ${state.me.code}`); }
+};
+el("rename").onclick = async () => {
+  const name = prompt("Name other people see", state.me.displayName);
+  if (!name) return;
+  try { const result = await api("PATCH", "/me", { displayName: name }); state.me = result.user; toast("Renamed"); }
+  catch (error) { toast(error.message); }
+};
+el("new-code").onclick = async () => {
+  if (!confirm("Forget this identity and get a new code? Existing chats stay on the server but this device loses access to them.")) return;
+  try {
+    await api("POST", "/device/forget", { deviceId: store.deviceId, deviceSecret: store.secret });
+    localStorage.removeItem("aw.deviceSecret");
+    location.reload();
+  } catch (error) { toast(error.message); }
+};
+
+bootstrap().catch(async (error) => {
+  if (error.code === "unauthorized" && store.secret) {
+    // The server forgot us (restart with the in-memory store: register again).
+    localStorage.removeItem("aw.deviceSecret");
+    store.secret = null;
+    return bootstrap();
+  }
+  el("status").textContent = "offline";
+  toast(`Could not reach the server: ${error.message}`);
+});
+</script>
+</body>
+</html>

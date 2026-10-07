@@ -33,6 +33,25 @@ class SettingsStore(context: Context) {
             prefs.edit().putString(KEY_DEVICE_ID, it).apply()
         }
 
+    /**
+     * The code this server gave the device, and the name people see.
+     * Cached here so the code can be shown even before the first network call
+     * of a cold start.
+     */
+    val myCode: String?
+        get() = prefs.getString(KEY_MY_CODE, null)
+
+    val myDisplayName: String?
+        get() = prefs.getString(KEY_MY_NAME, null)
+
+    fun rememberIdentity(code: String, displayName: String) {
+        prefs.edit().putString(KEY_MY_CODE, code).putString(KEY_MY_NAME, displayName).apply()
+    }
+
+    fun forgetIdentity() {
+        prefs.edit().remove(KEY_MY_CODE).remove(KEY_MY_NAME).apply()
+    }
+
     /** Set when the user has dismissed the in-app rationale for a permission. */
     var seenNotificationRationale: Boolean
         get() = prefs.getBoolean(KEY_NOTIF_RATIONALE, false)
@@ -106,7 +125,9 @@ class SettingsStore(context: Context) {
             ?.let { runCatching { EmojiMode.valueOf(it) }.getOrNull() }
             ?: EmojiMode.DESCRIBE_IMPORTANT,
         pauseBetweenMessagesMs = prefs.getLong(KEY_SP_PAUSE, 700L),
-        whisperMode = prefs.getBoolean(KEY_SP_WHISPER, false),
+        // Whisper mode is the point of the product during a call, so it is on by
+        // default; the volume slider in Settings is the escape hatch.
+        whisperMode = prefs.getBoolean(KEY_SP_WHISPER, true),
     )
 
     private fun readBackendUrl(): String =
@@ -126,6 +147,8 @@ class SettingsStore(context: Context) {
     companion object {
         private const val PREFS_NAME = "airwhispers.settings"
         private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_MY_CODE = "my_code"
+        private const val KEY_MY_NAME = "my_display_name"
         private const val KEY_BACKEND_URL = "backend_url"
         private const val KEY_ONBOARDED = "onboarded"
         private const val KEY_CA_WANTED = "call_assist_wanted"

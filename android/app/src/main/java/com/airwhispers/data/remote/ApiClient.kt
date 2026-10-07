@@ -1,10 +1,11 @@
 package com.airwhispers.data.remote
 
+import com.airwhispers.BuildConfig
+import com.airwhispers.config.ProductConfig
 import com.airwhispers.core.AppError
 import com.airwhispers.core.AppErrorKind
 import com.airwhispers.core.AppLog
 import com.airwhispers.core.AppResult
-import com.airwhispers.config.ProductConfig
 import com.airwhispers.core.DefaultDispatchers
 import com.airwhispers.core.DispatcherProvider
 import com.airwhispers.data.prefs.SecretStore
@@ -27,14 +28,16 @@ import java.util.concurrent.TimeUnit
  * HTTPS client for the AirWhispers API.
  *
  * Responsibilities kept intentionally narrow: build requests, carry the bearer
- * token, transparently refresh it once on 401, and translate failures into
- * [AppError]s. Retry/backoff for *delivery* lives in the repository layer.
+ * token, transparently mint a new one from the device secret on 401 (this is the
+ * "no login" trick — there is no sign-in screen to fall back to, and there never
+ * has to be one), and translate failures into [AppError]s.
  */
 class ApiClient(
     private val settings: SettingsStore,
     private val secrets: SecretStore,
     private val dispatchers: DispatcherProvider = DefaultDispatchers,
-    private val onSessionExpired: () -> Unit = {},
+    /** Called when even the device secret no longer works: the app re-registers. */
+    private val onIdentityLost: () -> Unit = {},
 ) {
 
     private val json = Json {
@@ -62,6 +65,15 @@ class ApiClient(
     /** Read-only access for the realtime transport's auth frame. */
     fun currentAccessToken(): String? = secrets.accessToken()
 
+    /**
+     * A usable access token, minted silently from the device secret when the cached
+     * one is missing (first run) or already expired.
+     */
+    suspend fun ensureAccessToken(): String? {
+        secrets.accessToken()?.takeIf { it.isNotBlank() }?.let { return it }
+        return if (refreshIdentity()) secrets.accessToken() else null
+    }
+
     fun webSocketUrl(): String {
         val base = baseUrl
         val schemeAdjusted = when {
@@ -72,54 +84,51 @@ class ApiClient(
         return "$schemeAdjusted/api/${ProductConfig.DEFAULT_API_VERSION}/realtime"
     }
 
-    // ------------------------------------------------------------------ auth api
+    // ------------------------------------------------------------------ identity
 
-    suspend fun register(email: String, password: String, displayName: String): AppResult<AuthResponse> {
+    /**
+     * Registers this installation (or resumes it).
+     *
+     *  - no stored secret → the server hands out a fresh code (first launch),
+     *  - stored secret     → the same identity answers with a fresh token.
+     */
+    suspend fun registerDevice(displayName: String? = null): AppResult<DeviceResponse> {
         val body = json.encodeToString(
-            RegisterRequest.serializer(),
-            RegisterRequest(email = email, password = password, displayName = displayName, deviceId = settings.deviceId),
+            DeviceRegisterRequest.serializer(),
+            DeviceRegisterRequest(
+                deviceId = settings.deviceId,
+                deviceSecret = secrets.deviceSecret(),
+                displayName = displayName,
+                appVersion = BuildConfig.VERSION_NAME,
+            ),
         )
-        val result = request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/auth/register", body, authenticated = false)
+        val result = request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/device/register", body, authenticated = false)
         return when (result) {
             is AppResult.Err -> result
-            is AppResult.Ok -> decode(result.value, AuthResponse.serializer()).also { storeTokens(it) }
+            is AppResult.Ok -> decode(result.value, DeviceResponse.serializer()).also { storeIdentity(it) }
         }
     }
 
-    suspend fun login(email: String, password: String): AppResult<AuthResponse> {
+    /** Throws the identity away on the server and asks for a brand-new code. */
+    suspend fun forgetDevice(): AppResult<Unit> {
+        val secret = secrets.deviceSecret()
+        if (secret.isNullOrBlank()) return AppResult.Ok(Unit)
         val body = json.encodeToString(
-            LoginRequest.serializer(),
-            LoginRequest(email = email, password = password, deviceId = settings.deviceId),
+            DeviceSecretRequest.serializer(),
+            DeviceSecretRequest(deviceId = settings.deviceId, deviceSecret = secret),
         )
-        val result = request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/auth/login", body, authenticated = false)
-        return when (result) {
-            is AppResult.Err -> result
-            is AppResult.Ok -> decode(result.value, AuthResponse.serializer()).also { storeTokens(it) }
-        }
-    }
-
-    suspend fun logout(): AppResult<Unit> {
-        val refresh = secrets.refreshToken()
-        val body = refresh?.let { json.encodeToString(RefreshRequest.serializer(), RefreshRequest(it)) }
-        val result = request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/auth/logout", body, authenticated = true)
+        val result = request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/device/forget", body, authenticated = false)
         secrets.clearSession()
-        return when (result) {
-            is AppResult.Ok -> AppResult.Ok(Unit)
-            // A failed server-side logout must not trap the user in the app.
-            is AppResult.Err -> AppResult.Ok(Unit)
-        }
+        return expectNoContent(result)
     }
 
     suspend fun me(): AppResult<MeResponse> =
-        get("/api/${ProductConfig.DEFAULT_API_VERSION}/users/me", MeResponse.serializer())
+        get("/api/${ProductConfig.DEFAULT_API_VERSION}/me", MeResponse.serializer())
 
     suspend fun updateProfile(displayName: String): AppResult<MeResponse> {
-        val body = json.encodeToString(
-            UpdateProfileRequest.serializer(),
-            UpdateProfileRequest(displayName),
-        )
+        val body = json.encodeToString(UpdateProfileRequest.serializer(), UpdateProfileRequest(displayName))
         return decode(
-            request("PATCH", "/api/${ProductConfig.DEFAULT_API_VERSION}/users/me", body, authenticated = true),
+            request("PATCH", "/api/${ProductConfig.DEFAULT_API_VERSION}/me", body, authenticated = true),
             MeResponse.serializer(),
         )
     }
@@ -129,8 +138,9 @@ class ApiClient(
     suspend fun conversations(): AppResult<ConversationListResponse> =
         get("/api/${ProductConfig.DEFAULT_API_VERSION}/conversations", ConversationListResponse.serializer())
 
-    suspend fun createConversation(peerUserId: String): AppResult<ConversationResponse> {
-        val body = json.encodeToString(CreateConversationRequest.serializer(), CreateConversationRequest(peerUserId))
+    /** Opens (or re-opens) the chat with the device that owns [code]. */
+    suspend fun createConversation(code: String): AppResult<ConversationResponse> {
+        val body = json.encodeToString(CreateConversationRequest.serializer(), CreateConversationRequest(code))
         return decode(
             request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/conversations", body, authenticated = true),
             ConversationResponse.serializer(),
@@ -168,6 +178,20 @@ class ApiClient(
         )
     }
 
+    /** Speech consent: "this person may be whispered to on my phone". */
+    suspend fun setTrust(conversationId: String, trusted: Boolean): AppResult<ConversationResponse> {
+        val body = json.encodeToString(TrustRequest.serializer(), TrustRequest(trusted))
+        return decode(
+            request(
+                "PATCH",
+                "/api/${ProductConfig.DEFAULT_API_VERSION}/conversations/$conversationId/trust",
+                body,
+                authenticated = true,
+            ),
+            ConversationResponse.serializer(),
+        )
+    }
+
     suspend fun markRead(messageId: String): AppResult<Unit> = expectNoContent(
         request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/messages/$messageId/read", null, authenticated = true),
     )
@@ -177,66 +201,35 @@ class ApiClient(
         request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/messages/$messageId/spoken", null, authenticated = true),
     )
 
-    // ------------------------------------------------------------- contacts api
-
-    suspend fun contacts(): AppResult<ContactListResponse> =
-        get("/api/${ProductConfig.DEFAULT_API_VERSION}/contacts", ContactListResponse.serializer())
-
-    suspend fun addContact(email: String): AppResult<ContactResponse> {
-        val body = json.encodeToString(AddContactRequest.serializer(), AddContactRequest(email))
-        return decode(
-            request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/contacts", body, authenticated = true),
-            ContactResponse.serializer(),
-        )
-    }
-
-    suspend fun updateContact(contactId: String, isTrusted: Boolean?, displayName: String?): AppResult<ContactResponse> {
-        val body = json.encodeToString(
-            UpdateContactRequest.serializer(),
-            UpdateContactRequest(isTrusted = isTrusted, displayName = displayName),
-        )
-        return decode(
-            request("PATCH", "/api/${ProductConfig.DEFAULT_API_VERSION}/contacts/$contactId", body, authenticated = true),
-            ContactResponse.serializer(),
-        )
-    }
-
-    suspend fun deleteContact(contactId: String): AppResult<Unit> = expectNoContent(
-        request("DELETE", "/api/${ProductConfig.DEFAULT_API_VERSION}/contacts/$contactId", null, authenticated = true),
-    )
-
-    // ------------------------------------------------------------- settings api
-
-    suspend fun settings(): AppResult<SettingsResponse> =
-        get("/api/${ProductConfig.DEFAULT_API_VERSION}/settings", SettingsResponse.serializer())
-
-    suspend fun updateSettings(patch: UpdateSettingsRequest): AppResult<SettingsResponse> {
-        val body = json.encodeToString(UpdateSettingsRequest.serializer(), patch)
-        return decode(
-            request("PATCH", "/api/${ProductConfig.DEFAULT_API_VERSION}/settings", body, authenticated = true),
-            SettingsResponse.serializer(),
-        )
-    }
-
     // --------------------------------------------------------------- devices api
 
-    suspend fun registerDevice(pushToken: String?, appVersion: String): AppResult<Unit> {
+    suspend fun registerPushToken(pushToken: String?): AppResult<Unit> {
         val body = json.encodeToString(
             DeviceRequest.serializer(),
-            DeviceRequest(deviceId = settings.deviceId, pushToken = pushToken, appVersion = appVersion),
+            DeviceRequest(
+                deviceId = settings.deviceId,
+                pushToken = pushToken,
+                appVersion = BuildConfig.VERSION_NAME,
+            ),
         )
         return expectNoContent(
             request("POST", "/api/${ProductConfig.DEFAULT_API_VERSION}/devices", body, authenticated = true),
         )
     }
 
-    suspend fun unregisterDevice(): AppResult<Unit> = expectNoContent(
+    suspend fun unregisterPushToken(): AppResult<Unit> = expectNoContent(
         request("DELETE", "/api/${ProductConfig.DEFAULT_API_VERSION}/devices/${settings.deviceId}", null, authenticated = true),
     )
+
+    // ------------------------------------------------------------------- setup
 
     /** Reachability probe used by the server-setup screen (no auth required). */
     suspend fun health(): AppResult<HealthResponse> =
         decode(request("GET", "/healthz", null, authenticated = false), HealthResponse.serializer())
+
+    /** "Are you an AirWhispers server?" — shown as a friendly check during setup. */
+    suspend fun serverInfo(): AppResult<ServerInfoDto> =
+        decode(request("GET", "/api/${ProductConfig.DEFAULT_API_VERSION}/server", null, authenticated = false), ServerInfoDto.serializer())
 
     // ------------------------------------------------------------------ plumbing
 
@@ -283,9 +276,12 @@ class ApiClient(
         if (authenticated) {
             val token = secrets.accessToken()
             if (token.isNullOrBlank()) {
-                // Local session is gone: nothing to retry with.
-                onSessionExpired()
-                return@withContext AppResult.Err(AppError.unauthorized("Not signed in"))
+                // No token yet (or it was cleared): try the device secret once.
+                if (refreshIdentity()) {
+                    return@withContext request(method, path, body, authenticated = true, isRetryAfterRefresh = true)
+                }
+                onIdentityLost()
+                return@withContext AppResult.Err(AppError.unauthorized("This device is not registered yet"))
             }
             builder.header("Authorization", "Bearer $token")
         }
@@ -305,11 +301,11 @@ class ApiClient(
                 res.isSuccessful -> AppResult.Ok(rawBody)
 
                 res.code == 401 && authenticated && !isRetryAfterRefresh -> {
-                    if (refreshTokens()) {
+                    if (refreshIdentity()) {
                         request(method, path, body, authenticated = true, isRetryAfterRefresh = true)
                     } else {
-                        onSessionExpired()
-                        AppResult.Err(AppError.unauthorized("Session expired"))
+                        onIdentityLost()
+                        AppResult.Err(AppError.unauthorized("This device is no longer recognised"))
                     }
                 }
 
@@ -335,6 +331,7 @@ class ApiClient(
         val message = detail?.message ?: "Request failed (${response.code})"
         val kind = when (response.code) {
             400, 422 -> AppErrorKind.BAD_REQUEST
+            401 -> AppErrorKind.UNAUTHORIZED
             403 -> AppErrorKind.FORBIDDEN
             404 -> AppErrorKind.NOT_FOUND
             409 -> AppErrorKind.CONFLICT
@@ -345,13 +342,19 @@ class ApiClient(
         return AppError(kind, message, httpStatus = response.code)
     }
 
-    /** Single-flight refresh so a burst of 401s results in one refresh call. */
-    private suspend fun refreshTokens(): Boolean = refreshMutex.withLock {
-        val refreshToken = secrets.refreshToken() ?: return@withLock false
-        val body = json.encodeToString(RefreshRequest.serializer(), RefreshRequest(refreshToken))
+    /**
+     * The whole "login" of this product: exchange the device secret for a fresh
+     * access token. Single-flight so a burst of 401s causes one call.
+     */
+    private suspend fun refreshIdentity(): Boolean = refreshMutex.withLock {
+        val secret = secrets.deviceSecret() ?: return@withLock false
+        val body = json.encodeToString(
+            DeviceSecretRequest.serializer(),
+            DeviceSecretRequest(deviceId = settings.deviceId, deviceSecret = secret),
+        )
         withContext(dispatchers.io) {
             val refreshRequest = Request.Builder()
-                .url(baseUrl + "/api/${ProductConfig.DEFAULT_API_VERSION}/auth/refresh")
+                .url(baseUrl + "/api/${ProductConfig.DEFAULT_API_VERSION}/device/token")
                 .post(body.toRequestBody(JSON_MEDIA))
                 .header("Accept", "application/json")
                 .build()
@@ -361,24 +364,26 @@ class ApiClient(
                     if (!res.isSuccessful || raw.isNullOrBlank()) {
                         false
                     } else {
-                        val tokens = json.decodeFromString(TokensDto.serializer(), raw)
-                        secrets.putAccessToken(tokens.accessToken)
-                        secrets.putRefreshToken(tokens.refreshToken)
+                        val tokens = json.decodeFromString(DeviceResponse.serializer(), raw)
+                        secrets.putAccessToken(tokens.tokens.accessToken)
+                        secrets.putUserId(tokens.user.id)
+                        settings.rememberIdentity(tokens.user.code, tokens.user.displayName)
                         true
                     }
                 }
             }.getOrElse {
-                AppLog.w("Api", "refresh_failed", it)
+                AppLog.w("Api", "identity_refresh_failed", it)
                 false
             }
         }
     }
 
-    private fun storeTokens(result: AppResult<AuthResponse>) {
+    private fun storeIdentity(result: AppResult<DeviceResponse>) {
         if (result is AppResult.Ok) {
             secrets.putAccessToken(result.value.tokens.accessToken)
-            secrets.putRefreshToken(result.value.tokens.refreshToken)
             secrets.putUserId(result.value.user.id)
+            result.value.deviceSecret?.let { secrets.putDeviceSecret(it) }
+            settings.rememberIdentity(result.value.user.code, result.value.user.displayName)
         }
     }
 

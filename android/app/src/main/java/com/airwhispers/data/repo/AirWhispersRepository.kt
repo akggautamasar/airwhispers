@@ -1,32 +1,30 @@
 package com.airwhispers.data.repo
 
 import android.content.Context
-import com.airwhispers.BuildConfig
 import com.airwhispers.core.AppError
-import com.airwhispers.core.AppErrorKind
 import com.airwhispers.core.AppLog
 import com.airwhispers.core.AppResult
 import com.airwhispers.core.DispatcherProvider
 import com.airwhispers.core.TimeSource
 import com.airwhispers.data.local.LocalStore
-import com.airwhispers.data.model.Account
 import com.airwhispers.data.model.CallStatus
-import com.airwhispers.data.model.Contact
 import com.airwhispers.data.model.Conversation
 import com.airwhispers.data.model.DeliveryState as ModelDeliveryState
+import com.airwhispers.data.model.Identity
 import com.airwhispers.data.model.Message
 import com.airwhispers.data.model.MessagePriority
 import com.airwhispers.data.model.MessageState
+import com.airwhispers.data.model.Peer
 import com.airwhispers.data.remote.ApiClient
-import com.airwhispers.data.remote.ContactDto
 import com.airwhispers.data.remote.ConversationDto
 import com.airwhispers.data.remote.EventDto
 import com.airwhispers.data.remote.EventTypes
 import com.airwhispers.data.remote.MessageDto
+import com.airwhispers.data.remote.PeerUpdatedDto
+import com.airwhispers.data.remote.PresenceDto
 import com.airwhispers.data.remote.RealtimeClient
 import com.airwhispers.data.remote.TimeParse
-import com.airwhispers.data.remote.UpdateSettingsRequest
-import com.airwhispers.data.remote.UserDto
+import com.airwhispers.data.remote.TypingDto
 import com.airwhispers.data.prefs.SecretStore
 import com.airwhispers.data.prefs.SettingsStore
 import com.airwhispers.domain.assist.CallAssistEngine
@@ -45,21 +43,31 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.util.UUID
 
-enum class SessionStatus { UNKNOWN, SIGNED_OUT, SIGNED_IN }
+/**
+ * Whether this device has an identity yet.
+ *
+ * There is no third state: either the server has handed out a code (READY) or the
+ * app is still asking for one (SETUP).
+ */
+enum class IdentityStatus { SETUP, READY }
 
-data class SessionState(
-    val status: SessionStatus = SessionStatus.UNKNOWN,
-    val account: Account? = null,
+data class IdentityState(
+    val status: IdentityStatus = IdentityStatus.SETUP,
+    val me: Identity? = null,
     val error: AppError? = null,
     val busy: Boolean = false,
 )
 
+/** Someone in a chat is typing right now (ephemeral, never persisted). */
+data class TypingSignal(val conversationId: String, val userId: String, val at: Long)
+
 /**
  * Single entry point for the app's data needs.
  *
- * Owns: session lifecycle, the local cache, the realtime event pipeline, the
- * outbox (send/retry), and the hand-off into Call Assist. The UI talks to this
- * class only, which keeps Compose code free of networking concerns.
+ * Owns: the device identity (register / resume / rotate), the local cache, the
+ * realtime event pipeline, the outbox (send/retry), and the hand-off into Call
+ * Assist. The UI talks to this class only, which keeps Compose code free of
+ * networking concerns.
  */
 class AirWhispersRepository(
     private val context: Context,
@@ -79,14 +87,11 @@ class AirWhispersRepository(
 
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
-    private val _session = MutableStateFlow(SessionState())
-    val session: StateFlow<SessionState> = _session.asStateFlow()
+    private val _session = MutableStateFlow(IdentityState())
+    val session: StateFlow<IdentityState> = _session.asStateFlow()
 
     private val _conversations = MutableStateFlow<List<Conversation>>(emptyList())
     val conversations: StateFlow<List<Conversation>> = _conversations.asStateFlow()
-
-    private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
-    val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
 
     private val _messages = MutableStateFlow<Map<String, List<Message>>>(emptyMap())
     val messages: StateFlow<Map<String, List<Message>>> = _messages.asStateFlow()
@@ -97,105 +102,109 @@ class AirWhispersRepository(
     private val _speechDecision = MutableStateFlow<CallAssistEngine.Outcome?>(null)
     val lastSpeechDecision: StateFlow<CallAssistEngine.Outcome?> = _speechDecision.asStateFlow()
 
+    private val _typing = MutableStateFlow<TypingSignal?>(null)
+    val typing: StateFlow<TypingSignal?> = _typing.asStateFlow()
+
     private val outboxMutex = Mutex()
     private var outboxJob: Job? = null
     private var eventJob: Job? = null
+    private var typingJob: Job? = null
+    private var scope: CoroutineScope? = null
 
     val currentUserId: String? get() = secrets.userId()
     val deviceId: String get() = settings.deviceId
 
-    // ------------------------------------------------------------------ session
+    /** The code on this device, if the server has ever given us one. */
+    val myCode: String? get() = _session.value.me?.code ?: settings.myCode
 
-    private var restoreAttempted = false
+    // ------------------------------------------------------------------ identity
+
+    private var registerAttempted = false
 
     /** Called by the UI on first composition; runs at most once per process. */
-    suspend fun restoreIfNeeded() {
-        if (restoreAttempted) return
-        restoreAttempted = true
-        restoreSession()
+    suspend fun restoreIfNeeded(displayName: String? = null) {
+        if (registerAttempted) return
+        registerAttempted = true
+        ensureRegistered(displayName)
     }
 
-    suspend fun restoreSession(): SessionState = withSession(UNKNOWN_PLACEHOLDER) {
-        if (secrets.accessToken().isNullOrBlank()) {
-            _session.value = SessionState(status = SessionStatus.SIGNED_OUT)
-            return@withSession _session.value
-        }
-        when (val result = api.me()) {
-            is AppResult.Ok -> enterSession(result.value.user.toAccount())
+    /**
+     * Makes sure this device has an identity.
+     *
+     * First launch: the server generates a code. Later launches: the stored device
+     * secret is exchanged for a fresh token — the user is never asked for anything.
+     */
+    suspend fun ensureRegistered(displayName: String? = null): IdentityState = withSession {
+        when (val result = api.registerDevice(displayName)) {
+            is AppResult.Ok -> enterIdentity(result.value.user.toIdentity())
             is AppResult.Err -> {
+                // Offline start with a cached code: show it, keep trying in the background.
+                val cachedCode = settings.myCode
                 val cachedId = secrets.userId()
-                val offline = result.error.kind == AppErrorKind.NETWORK
-                if (offline && cachedId != null) {
-                    // Offline start: keep the cached identity and refresh when we can.
-                    enterSession(Account(cachedId, "", "", null, time.nowMillis()))
+                if (cachedCode != null && cachedId != null) {
+                    _session.value = IdentityState(
+                        status = IdentityStatus.READY,
+                        me = Identity(cachedId, cachedCode, settings.myDisplayName ?: "This phone", time.nowMillis()),
+                        error = result.error,
+                    )
                 } else {
-                    secrets.clearSession()
-                    _session.value = SessionState(status = SessionStatus.SIGNED_OUT, error = result.error)
+                    _session.value = IdentityState(status = IdentityStatus.SETUP, error = result.error)
                 }
             }
         }
         _session.value
     }
 
-    suspend fun signIn(email: String, password: String): AppError? = withSession(null) {
-        when (val result = api.login(email.trim(), password)) {
-            is AppResult.Ok -> {
-                enterSession(result.value.user.toAccount())
-                null
-            }
-            is AppResult.Err -> {
-                _session.value = _session.value.copy(error = result.error)
-                result.error
-            }
+    suspend fun setDisplayName(name: String): AppError? = when (val result = api.updateProfile(name.trim())) {
+        is AppResult.Ok -> {
+            val identity = result.value.user.toIdentity()
+            _session.value = _session.value.copy(me = identity)
+            settings.rememberIdentity(identity.code, identity.displayName)
+            null
         }
+        is AppResult.Err -> result.error
     }
 
-    suspend fun register(email: String, password: String, displayName: String): AppError? =
-        withSession(null) {
-            when (val result = api.register(email.trim(), password, displayName.trim())) {
-                is AppResult.Ok -> {
-                    enterSession(result.value.user.toAccount())
-                    null
-                }
-                is AppResult.Err -> {
-                    _session.value = _session.value.copy(error = result.error)
-                    result.error
-                }
-            }
-        }
-
-    suspend fun signOut() {
+    /**
+     * "Give me a new code": forgets this identity everywhere and registers afresh.
+     * The old chats are left behind with the old code, by design.
+     */
+    suspend fun regenerateIdentity(): IdentityState {
         stopPipeline()
-        api.logout()
+        api.forgetDevice()
         secrets.clearSession()
         local.purgeAll()
         queue.reset()
         engine.resetAnnouncementState()
-        _session.value = SessionState(status = SessionStatus.SIGNED_OUT)
+        settings.forgetIdentity()
         _conversations.value = emptyList()
-        _contacts.value = emptyList()
         _messages.value = emptyMap()
+        registerAttempted = true
+        return ensureRegistered()
     }
 
     /** Kicks off initial loading, the realtime subscription and the outbox. */
-    fun startPipeline(scope: CoroutineScope) {
+    fun startPipeline(coroutineScope: CoroutineScope) {
+        scope = coroutineScope
         if (eventJob?.isActive == true) return
-        eventJob = scope.launch {
+        eventJob = coroutineScope.launch {
             realtime.events.collect { event -> onEvent(event) }
         }
-        outboxJob = scope.launch(dispatchers.io) { runOutbox() }
-        scope.launch(dispatchers.io) {
+        outboxJob = coroutineScope.launch(dispatchers.io) { runOutbox() }
+        coroutineScope.launch(dispatchers.io) {
             refreshConversations()
-            refreshContacts()
-            registerDevice()
+            registerForPush()
         }
     }
 
     fun stopPipeline() {
         eventJob?.cancel()
         outboxJob?.cancel()
+        typingJob?.cancel()
         eventJob = null
         outboxJob = null
+        typingJob = null
+        _typing.value = null
     }
 
     // ------------------------------------------------------------------- loading
@@ -204,8 +213,10 @@ class AirWhispersRepository(
         val result = api.conversations()
         return when (result) {
             is AppResult.Ok -> {
-                val domain = result.value.conversations.map { it.toDomain() }
+                val domain = result.value.conversations.map(ConversationDto::toDomain)
                 local.upsertConversations(domain)
+                // Keep the offline trust fallback in step with the server.
+                local.upsertPeers(domain.map { it.toPeer() })
                 _conversations.value = domain.sortedByDescending { it.lastMessageAt ?: 0L }
                 AppResult.Ok(domain)
             }
@@ -218,22 +229,13 @@ class AirWhispersRepository(
         }
     }
 
-    suspend fun refreshContacts(): AppResult<List<Contact>> {
-        val result = api.contacts()
-        return when (result) {
-            is AppResult.Ok -> {
-                val domain = result.value.contacts.map(ContactDto::toDomain)
-                local.upsertContacts(domain)
-                _contacts.value = domain
-                AppResult.Ok(domain)
-            }
-            is AppResult.Err -> {
-                val cached = local.contacts()
-                if (cached.isNotEmpty()) _contacts.value = cached
-                result
-            }
-        }
-    }
+    private fun Conversation.toPeer(): Peer = Peer(
+        id = peerId,
+        code = peerCode,
+        displayName = peerDisplayName,
+        allowsSpeak = youAllowSpeak,
+        conversationId = id,
+    )
 
     suspend fun loadMessages(conversationId: String, limit: Int = 100): AppResult<List<Message>> {
         val cached = local.messages(conversationId)
@@ -280,6 +282,7 @@ class AirWhispersRepository(
             deliveryState = ModelDeliveryState.NONE,
             priority = if (speakNow) MessagePriority.SPEAK_NOW else MessagePriority.NORMAL,
             isMine = true,
+            speakEligible = conversation?.peerAllowsSpeak ?: false,
         )
         local.upsertMessage(message)
         local.markConversationPreview(conversationId, message.text, message.createdAt)
@@ -346,56 +349,46 @@ class AirWhispersRepository(
         }
     }
 
-    // ------------------------------------------------------------------- contacts
+    // ---------------------------------------------------------------------- chats
 
-    suspend fun addContact(email: String): AppError? = when (val result = api.addContact(email.trim())) {
-        is AppResult.Ok -> {
-            val contact = result.value.contact.toDomain()
-            local.upsertContacts(listOf(contact))
-            _contacts.value = (_contacts.value + contact).distinctBy { it.userId }
-            refreshConversations()
-            null
-        }
-        is AppResult.Err -> result.error
-    }
-
-    suspend fun setTrusted(contact: Contact, trusted: Boolean): AppError? {
-        local.setContactTrust(contact.userId, trusted)
-        local.setConversationTrust(contact.userId, trusted)
-        _contacts.value = _contacts.value.map { if (it.userId == contact.userId) it.copy(isTrusted = trusted) else it }
-        _conversations.value = _conversations.value.map {
-            if (it.peerId == contact.userId) it.copy(peerTrusted = trusted) else it
-        }
-        return when (val result = api.updateContact(contact.id, isTrusted = trusted, displayName = null)) {
+    /** "New chat": the only address this product has is a friend's code. */
+    suspend fun openChatWithCode(code: String): Pair<String?, AppError?> =
+        when (val result = api.createConversation(code)) {
             is AppResult.Ok -> {
-                val updated = result.value.contact.toDomain()
-                local.upsertContacts(listOf(updated))
+                val conversation = result.value.conversation.toDomain()
+                local.upsertConversation(conversation)
+                local.upsertPeers(listOf(conversation.toPeer()))
+                _conversations.value = (_conversations.value.filterNot { it.id == conversation.id } + conversation)
+                    .sortedByDescending { it.lastMessageAt ?: 0L }
+                conversation.id to null
+            }
+            is AppResult.Err -> null to result.error
+        }
+
+    /** Speech consent for one peer: may their messages be spoken on this device? */
+    suspend fun setSpeakAllowed(conversation: Conversation, allowed: Boolean): AppError? {
+        local.setSpeakPermission(conversation.peerId, allowed)
+        local.setPeerAllowsSpeakPermission(conversation.peerId, allowed)
+        _conversations.value = _conversations.value.map {
+            if (it.id == conversation.id) it.copy(youAllowSpeak = allowed) else it
+        }
+        return when (val result = api.setTrust(conversation.id, allowed)) {
+            is AppResult.Ok -> {
+                val updated = result.value.conversation.toDomain()
+                local.upsertConversation(updated)
                 null
             }
             is AppResult.Err -> result.error.also {
+                // The server keeps the truth; a failed sync is retried on refresh.
                 AppLog.w("Repo", "trust_sync_failed", it.cause, "kind" to it.kind)
             }
         }
     }
 
-    suspend fun deleteContact(contact: Contact): AppError? {
-        local.deleteContact(contact.userId)
-        _contacts.value = _contacts.value.filterNot { it.userId == contact.userId }
-        return (api.deleteContact(contact.id) as? AppResult.Err)?.error
+    /** Tell the other side we are writing. Fire-and-forget, heavily rate limited. */
+    fun sendTyping(conversationId: String) {
+        realtime.sendTyping(conversationId)
     }
-
-    suspend fun openConversationWith(peerUserId: String): String? =
-        when (val result = api.createConversation(peerUserId)) {
-            is AppResult.Ok -> {
-                val conversation = result.value.conversation.toDomain()
-                local.upsertConversation(conversation)
-                _conversations.value = (_conversations.value + conversation)
-                    .distinctBy { it.id }
-                    .sortedByDescending { it.lastMessageAt ?: 0L }
-                conversation.id
-            }
-            is AppResult.Err -> null
-        }
 
     // --------------------------------------------------------------- realtime in
 
@@ -416,9 +409,33 @@ class AirWhispersRepository(
                     publishMessages(message.conversationId, local.messages(message.conversationId))
                 }
             }
-            EventTypes.MESSAGE_READ -> Unit // delivery ticks are optimistic locally
+            EventTypes.MESSAGE_READ -> {
+                // Delivery ticks are optimistic locally; refresh to be sure.
+                refreshConversations()
+            }
             EventTypes.CONVERSATION_UPDATED -> refreshConversations()
-            EventTypes.CONTACT_UPDATED -> refreshContacts()
+            EventTypes.PEER_UPDATED -> event.data?.let { data ->
+                val update = decode<PeerUpdatedDto>(data)
+                if (update != null && update.userId == currentUserId) {
+                    // The other side changed how they treat us.
+                    if (update.allowsSpeak != null) {
+                        _conversations.value = _conversations.value.map {
+                            if (it.peerId == update.userId) it.copy(peerAllowsSpeak = update.allowsSpeak) else it
+                        }
+                    }
+                }
+                refreshConversations()
+            }
+            EventTypes.PRESENCE_UPDATED -> event.data?.let { data ->
+                val presence = decode<PresenceDto>(data) ?: return@let
+                _conversations.value = _conversations.value.map {
+                    if (it.peerId == presence.userId) it.copy(peerOnline = presence.online) else it
+                }
+            }
+            EventTypes.TYPING -> event.data?.let { data ->
+                val typing = decode<TypingDto>(data) ?: return@let
+                showTyping(typing)
+            }
         }
     }
 
@@ -434,11 +451,13 @@ class AirWhispersRepository(
         publishMessages(message.conversationId, local.messages(message.conversationId))
 
         val name = senderName ?: conversation?.peerDisplayName ?: "Someone"
-        val trusted = conversation?.peerTrusted ?: local.isTrustedSender(message.senderId)
+        // Consent local to *this* device decides whether a message may be spoken;
+        // the sender's "whisper now" can never override it.
+        val senderAllowed = conversation?.youAllowSpeak ?: local.allowsSpeaker(message.senderId)
         val outcome = engine.evaluate(
             message = message,
             senderName = name,
-            senderTrusted = trusted,
+            senderTrusted = senderAllowed,
             settings = settings.callAssist.value,
             callStatus = callStatusProvider(),
             emojiMode = settings.speech.value.emojiMode,
@@ -447,6 +466,17 @@ class AirWhispersRepository(
         if (notify) onIncomingMessage(message, name)
         if (outcome.action == CallAssistEngine.Action.DROP && outcome.reason == "not_persisted") {
             AppLog.w("Repo", "speech_claim_missing_message", null, "id" to AppLog.fingerprint(message.clientMessageId))
+        }
+    }
+
+    private fun showTyping(typing: TypingDto) {
+        val signal = TypingSignal(typing.conversationId, typing.userId, time.nowMillis())
+        _typing.value = signal
+        val activeScope = scope ?: return
+        typingJob?.cancel()
+        typingJob = activeScope.launch {
+            delay(TYPING_LIFETIME_MS)
+            if (_typing.value == signal) _typing.value = null
         }
     }
 
@@ -477,66 +507,20 @@ class AirWhispersRepository(
     private val _pendingPush = MutableStateFlow<List<Pair<Message, String?>>>(emptyList())
     val pendingPushMessages: StateFlow<List<Pair<Message, String?>>> = _pendingPush.asStateFlow()
 
-    // ------------------------------------------------------------------- settings
+    // ------------------------------------------------------------------- devices
 
-    suspend fun syncSettingsFromServer(): AppError? {
-        val result = api.settings()
-        return when (result) {
-            is AppResult.Ok -> {
-                val dto = result.value.settings
-                settings.updateCallAssist {
-                    it.copy(
-                        speakMessages = dto.speakMessages,
-                        onlyDuringCalls = dto.onlyDuringCalls,
-                        trustedContactsOnly = dto.trustedContactsOnly,
-                        preferBluetooth = dto.preferBluetooth,
-                    )
-                }
-                settings.updateSpeech {
-                    it.copy(
-                        languageTag = dto.languageTag,
-                        speechRate = dto.speechRate,
-                        pitch = dto.pitch,
-                        emojiMode = runCatching {
-                            com.airwhispers.data.model.EmojiMode.valueOf(dto.emojiMode)
-                        }.getOrDefault(it.emojiMode),
-                    )
-                }
-                null
-            }
-            is AppResult.Err -> result.error
-        }
-    }
-
-    fun pushSettingsToServer(scope: CoroutineScope) {
-        val callAssist = settings.callAssist.value
-        val speech = settings.speech.value
-        scope.launch(dispatchers.io) {
-            api.updateSettings(
-                UpdateSettingsRequest(
-                    speakMessages = callAssist.speakMessages,
-                    onlyDuringCalls = callAssist.onlyDuringCalls,
-                    trustedContactsOnly = callAssist.trustedContactsOnly,
-                    preferBluetooth = callAssist.preferBluetooth,
-                    languageTag = speech.languageTag,
-                    speechRate = speech.speechRate,
-                    pitch = speech.pitch,
-                    emojiMode = speech.emojiMode.name,
-                ),
-            )
-        }
-    }
-
-    suspend fun registerDevice(): AppError? {
+    suspend fun registerForPush(): AppError? {
         val token = runCatching { PushBridge.handler?.token(context) }.getOrNull()
-        return (api.registerDevice(token, BuildConfig.VERSION_NAME) as? AppResult.Err)?.error
+        if (token == null && PushBridge.handler == null) return null
+        return (api.registerPushToken(token) as? AppResult.Err)?.error
     }
 
     // ------------------------------------------------------------------- internals
 
-    private suspend fun enterSession(account: Account) {
-        _session.value = SessionState(status = SessionStatus.SIGNED_IN, account = account)
-        AppLog.i("Repo", "session_started", "user" to AppLog.fingerprint(account.id))
+    private suspend fun enterIdentity(identity: Identity) {
+        settings.rememberIdentity(identity.code, identity.displayName)
+        _session.value = IdentityState(status = IdentityStatus.READY, me = identity)
+        AppLog.i("Repo", "identity_ready")
     }
 
     private fun publishMessages(conversationId: String, messages: List<Message>) {
@@ -551,7 +535,7 @@ class AirWhispersRepository(
             )
         }.getOrNull()
 
-    private suspend fun <T> withSession(fallback: T, block: suspend () -> T): T {
+    private suspend fun <T> withSession(block: suspend () -> T): T {
         _session.value = _session.value.copy(busy = true, error = null)
         val result = try {
             block()
@@ -562,6 +546,7 @@ class AirWhispersRepository(
     }
 
     private companion object {
-        val UNKNOWN_PLACEHOLDER = SessionState(status = SessionStatus.UNKNOWN)
+        /** How long "typing…" stays on screen after the last keystroke signal. */
+        const val TYPING_LIFETIME_MS = 4_000L
     }
 }

@@ -76,8 +76,14 @@ schema), a DI framework (one module), Firebase for the default flavor (needs an 
 ## D. Database schema
 
 Seven tables, defined in [`backend/sql/schema.sql`](../backend/sql/schema.sql):
-`users`, `refresh_tokens`, `conversations`, `conversation_members`, `messages`, `contacts`,
-`user_settings`, `devices`.
+`users` (one row per device identity, keyed by its random code), `device_credentials`
+(scrypt-hashed device secret — the reason there is no login), `conversations`,
+`conversation_members`, `messages`, `trusts` (speech consent, owned by the listener),
+`devices` (push targets).
+
+There is deliberately no `user_settings` table: speech settings describe *this phone's*
+voice and output, so they live only in the app, and the server stores exactly one social
+fact per pair.
 
 Key decisions:
 
@@ -95,10 +101,12 @@ Key decisions:
 
 ## E. API specification
 
-Versioned under `/api/v1`, documented in [api.md](api.md). Auth: `POST /auth/{register,login}`
-→ short-lived JWT access token + opaque rotating refresh token. Messaging:
-`GET/POST /conversations[/:id/messages]`, `POST /messages/:id/{read,spoken}`. Contacts with
-the trust flag, per-user speech settings, device registration for push, `/healthz`.
+Versioned under `/api/v1`, documented in [api.md](api.md). Identity: `POST /device/register`
+→ a 6-character code + HS256 access token + device secret; `POST /device/token` exchanges the
+secret for a fresh token (silent, forever), `POST /device/forget` revokes it. Messaging:
+`GET/POST /conversations[/:id/messages]` with `PATCH /conversations/:id/trust` for per-peer
+speech consent, `POST /messages/:id/{read,spoken}` receipts, device registration for push,
+`/healthz`.
 Realtime: `WSS /api/v1/realtime` with an explicit `auth` frame — the token never travels in
 a URL query string where proxies and logs could capture it.
 
@@ -122,23 +130,24 @@ interface with a fake for tests.
 
 ## G. Security model
 
-See [security.md](security.md). In short: TLS in production, scrypt password hashing,
-short-lived HS256 access tokens, rotating single-use refresh tokens stored as SHA-256
-hashes, server-side authorization on every conversation and message (membership checks,
-recipient-only read receipts), per-scope rate limiting, no secrets in logs, tokens encrypted
-with a non-exportable Android Keystore key, and an explicit migration path to E2EE.
+See [security.md](security.md). In short: TLS in production, 256-bit device secrets hashed
+with scrypt (there is no password to guess), short-lived HS256 access tokens minted silently
+from that secret, server-side authorization on every conversation and message (membership
+checks, recipient-only receipts, consent owned by the listener), default-deny speech,
+per-scope rate limiting, no secrets or message bodies in logs, secret material encrypted with
+a non-exportable Android Keystore key, and an explicit migration path to E2EE.
 
 ## H. MVP implementation plan (all phases shipped in this repo)
 
 | Phase | Deliverable | Status |
 | --- | --- | --- |
-| 1 | Authentication (register/login/refresh/logout, secure storage) | ✅ |
-| 2 | 1-to-1 messaging (REST + local cache + outbox + retry) | ✅ |
+| 1 | Loginless identity (device code + device secret, silent re-auth, secure storage) | ✅ |
+| 2 | 1-to-1 messaging opened by code (REST + local cache + outbox + retry) | ✅ |
 | 3 | Realtime delivery (WebSocket) + optional FCM push | ✅ |
 | 4 | Local TTS (device engine, settings, test voice) | ✅ |
 | 5 | Call Assist (foreground service, rules, notification controls) | ✅ |
 | 6 | Sequential speech queue (pause/resume/skip/stop/clear, priorities) | ✅ |
-| 7 | Trusted contacts (per-contact trust, privacy-first defaults) | ✅ |
+| 7 | Per-peer speech consent (listener-owned, default deny) | ✅ |
 | 8 | Audio behaviour (focus, Bluetooth awareness, never reroute a call) | ✅ |
 | 9 | Polish + testing (unit tests, API tests, smoke test, docs) | ✅ |
 | 10 | Security hardening (keystore, rate limits, authz tests, log hygiene) | ✅ |
@@ -254,7 +263,7 @@ rather than claiming certainty.
 * A message that *is being spoken* gets a **silent** notification (big text, no sound, no
   vibration): the user is listening, and chirping twice is the classic failure of apps in
   this category.
-* A message that is *not* spoken (Call Assist off, untrusted sender, nothing to say) gets a
+* A message that is *not* spoken (Call Assist off, sender not allowed, nothing to say) gets a
   normal high-priority notification.
 * The ongoing Call Assist notification shows live state ("Speaking: Partner", queue depth)
   and carries Pause / Skip / Stop actions, so the user can intervene without unlocking.
@@ -285,7 +294,7 @@ rather than claiming certainty.
 
 | Requirement | Status |
 | --- | --- |
-| Two users with accounts, connected as contacts | ✅ implemented and API-tested |
+| Two devices, connected by code, no login anywhere | ✅ implemented and API-tested |
 | A starts a WhatsApp/Telegram/dialer call | ✅ outside our app; detection heuristic + manual switch |
 | A activates Call Assist if detection is unavailable | ✅ button, quick-settings tile, notification action |
 | B sends a message; A receives it while our app is backgrounded | ✅ socket while armed; FCM push with the `fcm` flavor |
@@ -294,7 +303,7 @@ rather than claiming certainty.
 | The external call continues normally | ✅ we never touch call audio; only transient ducking **[device test]** |
 | Multiple messages queue correctly, no duplicates | ✅ queue + durable spoken ledger, unit-tested |
 | Pause / stop / skip / clear | ✅ notification actions and in-app controls |
-| Trusted-contact rules respected | ✅ default-deny, per-contact toggle, server-synced |
+| Consent respected | ✅ default-deny, per-peer toggle, synced and enforced by the listener |
 | Call Assist OFF stops all automatic speech | ✅ service teardown clears the queue and the queue's gate is the first check |
 
 The remaining risk is *physical*: perceived loudness, routing and OEM aggressiveness on real

@@ -24,10 +24,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.airwhispers.R
 import com.airwhispers.data.model.CallDetectionSource
 import com.airwhispers.data.model.CallState
 import com.airwhispers.service.CallAssistController
@@ -49,6 +47,8 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
     val queue by viewModel.queue.collectAsState()
     val callStatus by viewModel.callStatus.collectAsState()
     val capability by viewModel.capability.collectAsState()
+    val conversations by viewModel.conversations.collectAsState()
+    val speech by viewModel.speech.collectAsState()
     var manualCall by remember { mutableStateOf(false) }
 
     Column(
@@ -76,9 +76,11 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 Text(
                     if (callAssist.enabled) {
-                        "AirWhispers is listening for messages. Anything allowed by your rules will be spoken through ${viewModel.audioRoute.lowercase()}."
+                        "AirWhispers is listening. Messages from people you allow are spoken through " +
+                            "${viewModel.audioRoute.lowercase()} — quietly, while your call keeps going."
                     } else {
-                        "Start Call Assist right before or during a call. Nothing is spoken until then."
+                        "Switch this on right before or during a call in WhatsApp, Meet, Discord or the dialer. " +
+                            "Nothing is spoken until then."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -89,15 +91,15 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
                         OutlinedButton(
                             onClick = { CallAssistController.stop(context) },
                             modifier = Modifier.weight(1f),
-                        ) { Text(stringResource(R.string.call_assist_stop_speech)) }
+                        ) { Text("Stop") }
                     } else {
                         Button(
                             onClick = {
                                 startCallAssist()
-                                viewModel.setCallAssistEnabled(true)
+                                viewModel.startListening()
                             },
                             modifier = Modifier.weight(1f),
-                        ) { Text(stringResource(R.string.call_assist_start)) }
+                        ) { Text("Start listening") }
                     }
                     OutlinedButton(
                         onClick = {
@@ -110,17 +112,17 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
             }
         }
 
-        SectionCard(title = stringResource(R.string.call_assist_queue_title)) {
+        SectionCard(title = "Queue") {
             SettingRow(
                 title = queue.current?.let { "Speaking: ${it.senderName}" } ?: "Nothing playing",
                 subtitle = queue.current?.body?.take(90) ?: "Messages wait here so they never overlap.",
             )
             SettingRow(
-                title = stringResource(R.string.call_assist_waiting_title, queue.depth),
-                subtitle = stringResource(R.string.call_assist_spoken_count, queue.spokenCount),
+                title = "Waiting: ${queue.depth}",
+                subtitle = "Spoken so far in this session: ${queue.spokenCount}",
             )
             queue.lastError?.let { error ->
-                SettingRow(title = stringResource(R.string.call_assist_problem_title), subtitle = error)
+                SettingRow(title = "Speech problem", subtitle = error)
             }
             Row(
                 Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -129,39 +131,49 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
                 TextButton(
                     onClick = { if (queue.paused) CallAssistController.resume(context) else CallAssistController.pause(context) },
                 ) { Text(if (queue.paused) "Resume" else "Pause") }
-                TextButton(onClick = { CallAssistController.skip(context) }) { Text(stringResource(R.string.call_assist_skip)) }
-                TextButton(onClick = { CallAssistController.clearQueue(context) }) { Text(stringResource(R.string.call_assist_clear_queue)) }
+                TextButton(onClick = { CallAssistController.skip(context) }) { Text("Skip") }
+                TextButton(onClick = { CallAssistController.clearQueue(context) }) { Text("Clear queue") }
             }
         }
 
-        SectionCard(title = stringResource(R.string.call_assist_rules)) {
+        SectionCard(title = "Rules") {
             SwitchRow(
-                title = stringResource(R.string.call_assist_read_aloud),
-                subtitle = stringResource(R.string.call_assist_read_aloud_summary),
+                title = "Speak incoming messages",
+                subtitle = "Off means messages are normal notifications.",
                 checked = callAssist.speakMessages,
                 onCheckedChange = { value ->
                     viewModel.updateCallAssist { it.copy(speakMessages = value) }
                 },
             )
             SwitchRow(
-                title = stringResource(R.string.call_assist_only_in_calls),
-                subtitle = stringResource(R.string.call_assist_only_in_calls_summary),
+                title = "Only during calls",
+                subtitle = "Speak only when a call or communication session is detected.",
                 checked = callAssist.onlyDuringCalls,
                 onCheckedChange = { value ->
                     viewModel.updateCallAssist { it.copy(onlyDuringCalls = value) }
                 },
             )
+            if (com.airwhispers.config.ProductConfig.WHISPER_MODE_ENABLED) {
+                SwitchRow(
+                    title = "Whisper mode",
+                    subtitle = "Speak softly so only you (or your earbuds) hear it, not the room.",
+                    checked = speech.whisperMode,
+                    onCheckedChange = { value ->
+                        viewModel.updateSpeech { it.copy(whisperMode = value) }
+                    },
+                )
+            }
             SwitchRow(
-                title = stringResource(R.string.call_assist_trusted_only),
-                subtitle = stringResource(R.string.call_assist_trusted_only_summary),
+                title = "Only people I allow",
+                subtitle = "Everyone else stays a normal notification. You allow people one by one, below.",
                 checked = callAssist.trustedContactsOnly,
                 onCheckedChange = { value ->
                     viewModel.updateCallAssist { it.copy(trustedContactsOnly = value) }
                 },
             )
             SwitchRow(
-                title = stringResource(R.string.call_assist_prefer_bluetooth),
-                subtitle = stringResource(R.string.call_assist_prefer_bluetooth_summary),
+                title = "Prefer Bluetooth",
+                subtitle = "Use connected earbuds or headset when the system routes audio there.",
                 checked = callAssist.preferBluetooth,
                 onCheckedChange = { value ->
                     viewModel.updateCallAssist { it.copy(preferBluetooth = value) }
@@ -169,7 +181,25 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
             )
         }
 
-        SectionCard(title = stringResource(R.string.call_assist_capability_title)) {
+        SectionCard(title = "Who may whisper to you") {
+            if (conversations.isEmpty()) {
+                SettingRow(
+                    title = "Nobody yet",
+                    subtitle = "Add someone's code in the Chats tab, then allow them here.",
+                )
+            } else {
+                conversations.forEach { conversation ->
+                    SwitchRow(
+                        title = conversation.peerDisplayName,
+                        subtitle = "code ${prettyCode(conversation.peerCode)}",
+                        checked = conversation.youAllowSpeak,
+                        onCheckedChange = { allowed -> viewModel.setSpeakAllowed(conversation, allowed) },
+                    )
+                }
+            }
+        }
+
+        SectionCard(title = "What this device can detect") {
             SettingRow(
                 title = if (capability.automaticDetectionAvailable) "Automatic detection available" else "Manual mode only",
                 subtitle = if (capability.automaticDetectionAvailable) {
@@ -183,8 +213,8 @@ fun CallAssistScreen(viewModel: AppViewModel, startCallAssist: () -> Unit) {
             }
         }
 
-        SectionCard(title = stringResource(R.string.call_assist_audio)) {
-            SettingRow(title = stringResource(R.string.call_assist_output_now), subtitle = viewModel.audioRoute)
+        SectionCard(title = "Audio") {
+            SettingRow(title = "Output right now", subtitle = viewModel.audioRoute)
             InfoBanner(
                 "AirWhispers speaks to *you* through this phone's audio output. It never joins, records or changes the audio of your WhatsApp, Meet, Discord or phone call — and it never disconnects your headphones.",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),

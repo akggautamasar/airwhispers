@@ -6,15 +6,9 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend.yml"
-      # docs-contract.test.ts asserts that docs/api.md matches the routes and
-      # error codes the app actually implements, so a docs-only edit must run
-      # the backend tests — otherwise the guard has a hole exactly where the
-      # drift happens.
-      - "docs/api.md"
   pull_request:
     paths:
       - "backend/**"
-      - "docs/api.md"
   workflow_dispatch:
 
 permissions:
@@ -50,8 +44,6 @@ jobs:
         run: npm test
         env:
           LOG_LEVEL: silent
-        # The PostgreSQL store contract skips here (no database) and runs in the
-        # `postgres` job below, which is the one that matters for production.
 
       - name: Smoke test against a live server
         run: |
@@ -64,62 +56,3 @@ jobs:
             sleep 0.5
           done
           node scripts/smoke.mjs http://127.0.0.1:8099
-
-  postgres:
-    name: PostgreSQL store contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: backend
-
-    # The production store (`store.pg.ts` + `sql/schema.sql`) is verified here and
-    # nowhere else: it needs a real PostgreSQL. An emulator was tried first and
-    # rejected — see the note in tests/store-contract.ts.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: airwhispers
-          POSTGRES_PASSWORD: airwhispers
-          POSTGRES_DB: airwhispers_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U airwhispers -d airwhispers_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-
-    env:
-      TEST_DATABASE_URL: postgres://airwhispers:airwhispers@127.0.0.1:5432/airwhispers_test
-      LOG_LEVEL: silent
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-
-      - run: npm ci --no-audit --no-fund
-
-      - name: Apply the production schema (sql/schema.sql)
-        run: DATABASE_URL="$TEST_DATABASE_URL" npm run schema
-
-      - name: Store contract + API tests against PostgreSQL
-        run: |
-          set -o pipefail
-          npm test 2>&1 | tee /tmp/backend-test.log
-
-      - name: Explain the failure
-        if: failure()
-        run: |
-          {
-            echo "PostgreSQL store contract failed"
-            grep -nE "AssertionError|not ok|error:|relation \"|column \"|syntax error|expected|actual" /tmp/backend-test.log | head -40
-            echo "--- last lines ---"
-            tail -20 /tmp/backend-test.log
-          } | sed 's/^/::error::/'

@@ -12,13 +12,8 @@
     <string name="auth_welcome_title">Welcome to AirWhispers</string>
     <string name="auth_welcome_subtitle">Hear your messages while you are on a call.</string>
     <string name="auth_backend_label">Server address</string>
-    <string name="auth_backend_helper">Point this at your AirWhispers server. Use https:// for anything outside your own network.</string>
-    <string name="auth_backend_insecure_warning">This address is not encrypted (http://). Messages and sign-in tokens could be read by others on the network.</string>
-    <string name="auth_sign_in">Sign in</string>
-    <string name="auth_sign_up">Create account</string>
-    <string name="auth_forgot_password">Forgot password?</string>
-    <string name="auth_email">Email</string>
-    <string name="auth_password">Password</string>
+    <string name="auth_backend_helper">The address of an AirWhispers server. Run your own with two commands (see below), or ask whoever invited you. Use https:// for anything outside your own network.</string>
+    <string name="auth_backend_insecure_warning">This address is not encrypted (http://). Messages could be read by others on the network.</string>
     <string name="auth_display_name">Display name</string>
     <string name="auth_continue">Continue</string>
     <string name="auth_connecting">Connecting…</string>
@@ -27,9 +22,10 @@
     <string name="chats_title">Chats</string>
     <string name="chat_input_hint">Message</string>
     <string name="chat_send">Send</string>
-    <string name="chat_speak_now">Speak Now</string>
-    <string name="chat_speak_now_description">Speak Now marks the message so a recipient with Call Assist can hear it as soon as possible.</string>
-    <string name="chat_empty_state">No messages yet.\nSay hello…</string>
+    <string name="chat_speak_now">Whisper now</string>
+    <string name="chat_speak_now_description">Whisper now asks the recipient\'s Call Assist to speak this message as soon as it is allowed to.</string>
+    <string name="chat_empty_state">No messages yet.
+Say hello…</string>
     <string name="chat_new">New chat</string>
     <string name="chat_pending">Sending…</string>
     <string name="chat_failed">Not sent. Tap to retry.</string>
@@ -41,9 +37,8 @@
     <!-- Contacts -->
     <string name="contacts_title">Contacts</string>
     <string name="contacts_add">Add contact</string>
-    <string name="contacts_search_hint">Search by email or handle</string>
-    <string name="contacts_trusted">Trusted for Call Assist</string>
-    <string name="contacts_empty">No contacts yet. Add someone by their email address.</string>
+    <string name="contacts_trusted">Allowed to whisper to me</string>
+    <string name="contacts_empty">No chats yet. Add someone by their code.</string>
 
     <!-- Call Assist -->
     <string name="call_assist_title">Call Assist</string>
@@ -55,7 +50,7 @@
     <string name="call_assist_read_aloud_summary">Messages are normal notifications unless this is on.</string>
     <string name="call_assist_only_in_calls">Only during calls</string>
     <string name="call_assist_only_in_calls_summary">Speak only when a call or communication session is detected.</string>
-    <string name="call_assist_trusted_only">Trusted contacts only</string>
+    <string name="call_assist_trusted_only">Only people I allow</string>
     <string name="call_assist_prefer_bluetooth">Prefer Bluetooth</string>
     <string name="call_assist_detection_ok">Automatic call detection is available on this device (%1$s).</string>
     <string name="call_assist_detection_unavailable">Automatic call detection isn’t available on this device. Start Call Assist manually before or during a call.</string>
@@ -86,10 +81,9 @@
     <string name="settings_title">Settings</string>
     <string name="settings_privacy">Privacy</string>
     <string name="settings_notifications">Notifications</string>
-    <string name="settings_account">Account</string>
+    <string name="settings_account">This device</string>
     <string name="settings_security">Security</string>
     <string name="settings_about">About</string>
-    <string name="settings_sign_out">Sign out</string>
 
     <!-- Notifications -->
     <string name="notif_channel_messages">Messages</string>
@@ -111,59 +105,7 @@
     <string name="error_generic">Something went wrong. Please try again.</string>
     <string name="error_offline">You are offline. Messages will be sent when the connection returns.</string>
     <string name="error_server_unreachable">Can’t reach the server.</string>
-    <string name="error_session_expired">Your session expired. Please sign in again.</string>
     <string name="tts_unavailable">Speech is unavailable. Check that a text-to-speech engine is installed and enabled in Android settings.</string>
-
-    <!-- Call Assist (extended) -->
-    <string name="call_assist_stop_speech">Stop</string>
-    <string name="call_assist_queue_title">Queue</string>
-    <string name="call_assist_waiting_title">Waiting: %1$d</string>
-    <string name="call_assist_spoken_count">Spoken so far in this session: %1$d</string>
-    <string name="call_assist_problem_title">Speech problem</string>
-    <string name="call_assist_rules">Rules</string>
-    <string name="call_assist_trusted_only_summary">Everyone else stays a normal notification.</string>
-    <string name="call_assist_prefer_bluetooth_summary">Use connected earbuds or headset when the system routes audio there.</string>
-    <string name="call_assist_capability_title">What this device can detect</string>
-    <string name="call_assist_audio">Audio</string>
-    <string name="call_assist_output_now">Output right now</string>
-    <string name="call_assist_whisper_mode">Whisper mode</string>
-    <string name="call_assist_whisper_mode_summary">Softer voice for earphones (experimental).</string>
-
-    <!-- Chat (extended) -->
-    <string name="chat_conversation">Conversation</string>
-    <string name="chat_not_spoken_here">Not spoken aloud on this device</string>
-    <string name="chats_empty_title">No conversations yet</string>
-
-    <!-- Contacts (extended) -->
-    <string name="contacts_hint_existing_account">They must already have an AirWhispers account.</string>
-
-    <!-- Settings (extended) -->
-    <string name="settings_server">Server</string>
-    <string name="settings_server_not_configured">Not configured</string>
-    <string name="settings_change_server">Change server</string>
-    <string name="settings_notifications_reliability">Notifications &amp; reliability</string>
-    <string name="settings_notification_settings">Notification settings</string>
-    <string name="settings_notification_settings_summary">Choose how AirWhispers may alert you.</string>
-    <string name="settings_allow_detection">Allow call detection (optional)</string>
-    <string name="settings_allow_detection_summary">Lets Call Assist start with phone calls. No call content is accessed.</string>
-    <string name="settings_battery_ignore">Ignore battery optimisation</string>
-    <string name="settings_battery_ignore_summary">Recommended so spoken messages keep working with the screen off.</string>
-    <string name="settings_realtime">Realtime connection</string>
-    <string name="settings_device_id">Device id</string>
-    <string name="settings_engine_title">This device speaks with</string>
-    <string name="settings_engine_summary">Your phone’s own text-to-speech engine — nothing is sent to a cloud service.</string>
-    <string name="settings_about_version">AirWhispers %1$s</string>
-    <string name="settings_about_build">Build %1$d · %2$s</string>
-    <string name="settings_docs_title">Call Assist behaviour is documented</string>
-    <string name="settings_docs_summary">See docs/android-limitations.md in the repository.</string>
-
-    <!-- Actions (extended) -->
-    <string name="onboarding_server_reachable">Server reachable</string>
-    <string name="action_close">Close</string>
-    <string name="action_add">Add</string>
-    <string name="action_start">Start</string>
-    <string name="action_skip_check">Skip check and continue</string>
-    <string name="auth_backend_placeholder">AirWhispers server</string>
 
     <string name="action_retry">Retry</string>
     <string name="action_cancel">Cancel</string>

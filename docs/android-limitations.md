@@ -56,8 +56,7 @@ hear the spoken message — only the local user does.
   audio instead of ducking it; that is their choice and we cannot override it.
 * AirWhispers never calls `setSpeakerphoneOn`, `setMode`, `setCommunicationDevice`,
   `startBluetoothSco` or `setBluetoothScoOn`. Those are precisely the calls that could reroute
-  the user's live call — and because they are never called, the app does not request
-  `MODIFY_AUDIO_SETTINGS` either.
+  the user's live call.
 
 ## 5. Bluetooth routing
 

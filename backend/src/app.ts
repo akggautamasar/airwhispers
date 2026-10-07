@@ -1,4 +1,5 @@
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from "fastify";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Config } from "./config.js";
 import {
@@ -8,40 +9,29 @@ import {
   NotFoundError,
   RateLimitError,
   ValidationError,
-  asBoolean,
-  asEmail,
+  asCode,
+  asDeviceId,
   asMessageText,
-  asNumber,
   asObject,
   asOneOf,
   asOptionalBoolean,
-  asOptionalNumber,
   asOptionalString,
-  asPassword,
   asString,
   asUuid,
+  asDisplayName,
 } from "./validators.js";
 import {
-  hashPassword,
-  newRefreshToken,
-  sha256,
+  hashSecret,
+  newCode,
+  newDeviceSecret,
+  normaliseCode,
   signAccessToken,
   verifyAccessToken,
-  verifyPassword,
+  verifySecret,
 } from "./crypto.js";
 import type { FcmPusher } from "./push.js";
 import type { RealtimeHub } from "./realtime.js";
-import {
-  type Contact,
-  type Conversation,
-  type Device,
-  type Message,
-  type MessagePriority,
-  type Store,
-  type User,
-  type UserSettings,
-  type UserWithSecret,
-} from "./types.js";
+import type { Conversation, Device, Message, MessagePriority, Store, User } from "./types.js";
 
 export interface AppDeps {
   config: Config;
@@ -83,6 +73,16 @@ class RateLimiter {
   }
 }
 
+/**
+ * The whole HTTP surface: one file, easy to audit.
+ *
+ * Identity model in one paragraph: a device registers once (`POST /device/register`)
+ * and receives a short code — its only address — plus a long-lived device secret
+ * that lets it mint fresh access tokens with no user interaction, forever
+ * (`POST /device/token`). There is no email, no password, no sign-up form and no
+ * account recovery, because there is nothing to recover: losing the secret means
+ * registering again and being handed a *new* code.
+ */
 export function buildApp(deps: AppDeps): FastifyInstance {
   const { config, store, hub, pusher } = deps;
   const version = deps.version ?? "1.0.0";
@@ -91,7 +91,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({
     logger: { level: config.logLevel },
     trustProxy: config.trustProxy,
-    bodyLimit: 256 * 1024,
+    bodyLimit: 128 * 1024,
   });
 
   // Endpoints such as POST /messages/:id/read take no parameters, and clients
@@ -130,13 +130,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   const userDto = (user: User) => ({
     id: user.id,
-    email: user.email,
+    code: user.code,
     displayName: user.displayName,
-    handle: user.handle,
     createdAt: iso(user.createdAt),
   });
 
-  const messageDto = (message: Message) => ({
+  const messageDto = (message: Message, speakable = false) => ({
     id: message.id,
     clientMessageId: message.clientMessageId,
     conversationId: message.conversationId,
@@ -147,19 +146,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     priority: message.priority,
     deliveryStatus: message.deliveredAt ? "delivered" : "sent",
     readStatus: message.readAt ? "read" : "unread",
-    // Call Assist may speak it unless the sender asked for silence.
-    speakEligible: true,
-  });
-
-  const settingsDto = (settings: UserSettings) => ({
-    speakMessages: settings.speakMessages,
-    onlyDuringCalls: settings.onlyDuringCalls,
-    trustedContactsOnly: settings.trustedContactsOnly,
-    preferBluetooth: settings.preferBluetooth,
-    languageTag: settings.languageTag,
-    speechRate: settings.speechRate,
-    pitch: settings.pitch,
-    emojiMode: settings.emojiMode,
+    spoken: message.spokenAt !== null,
+    /** Whether the recipient currently lets this sender whisper to them. */
+    speakEligible: speakable,
   });
 
   const conversationDto = async (conversation: Conversation, viewerId: string) => {
@@ -167,32 +156,22 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const peer = await store.findUserById(peerId);
     const last = (await store.lastMessages([conversation.id])).get(conversation.id);
     const unread = await store.unreadCount(conversation.id, viewerId);
-    const contact = await store.findContact(viewerId, peerId);
+    const iAllow = await store.findTrust(viewerId, peerId);
+    const theyAllow = await store.findTrust(peerId, viewerId);
     return {
       id: conversation.id,
+      createdAt: iso(conversation.createdAt),
       peer: peer
-        ? userDto(peer)
-        : { id: peerId, email: "unknown@airwhispers", displayName: "Unknown", handle: null, createdAt: iso(Date.now()) },
-      lastMessage: last ? messageDto(last) : null,
+        ? { ...userDto(peer), online: hub.isOnline(peerId) }
+        : { id: peerId, code: "------", displayName: "Unknown", createdAt: iso(conversation.createdAt), online: false },
+      lastMessage: last ? messageDto(last, theyAllow?.trusted === true) : null,
       unreadCount: unread,
-      peerTrusted: contact?.isTrusted ?? false,
+      /** May this peer trigger speech on *this* device? */
+      youAllowSpeak: iAllow?.trusted === true,
+      /** May this device's messages be spoken on the peer's device? */
+      peerAllowsSpeak: theyAllow?.trusted === true,
     };
   };
-
-  const contactDto = (contact: Contact, user: User, conversationId: string | null) => ({
-    id: contact.contactUserId,
-    user: userDto(user),
-    isTrusted: contact.isTrusted,
-    conversationId,
-  });
-
-  /**
-   * Path parameters are client input like any other: a malformed id must fail
-   * validation (400) instead of reaching the database, where PostgreSQL answers
-   * `invalid input syntax for type uuid` and the API would return a 500.
-   */
-  const idParam = (params: unknown, key: string): string =>
-    asUuid((params as Record<string, unknown>)[key], key);
 
   /** Ensures the caller is a member of a conversation. */
   const requireConversation = async (conversationId: string, userId: string): Promise<Conversation> => {
@@ -202,22 +181,37 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return conversation;
   };
 
-  const issueTokens = async (user: User, deviceId: string | null) => {
-    const access = signAccessToken({ sub: user.id, deviceId: deviceId ?? undefined }, config.jwtSecret, config.accessTokenTtlSeconds);
-    const refresh = newRefreshToken();
-    await store.saveRefreshToken({
-      tokenHash: refresh.hash,
-      userId: user.id,
-      deviceId,
-      expiresAt: Date.now() + config.refreshTokenTtlSeconds * 1000,
-      revokedAt: null,
-    });
+  const issueTokens = (user: User, deviceId: string) => {
+    const access = signAccessToken({ sub: user.id, deviceId }, config.jwtSecret, config.accessTokenTtlSeconds);
     return {
       accessToken: access.token,
-      refreshToken: refresh.token,
       expiresIn: access.expiresIn,
       tokenType: "Bearer" as const,
     };
+  };
+
+  /**
+   * Allocates an identity with a code nobody else on this server holds.
+   * `createUser` refuses duplicates, so a collision is retried a few times.
+   */
+  const createIdentity = async (displayName: string): Promise<User> => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        return await store.createUser({ code: newCode(), displayName });
+      } catch (error) {
+        if ((error as Error).message !== "code_taken") throw error;
+      }
+    }
+    throw new ConflictError("Could not allocate a free code, please retry");
+  };
+
+  /** Checks the `{deviceId, deviceSecret}` pair against every credential we hold. */
+  const credentialFor = async (deviceId: string, secret: string) => {
+    const credentials = await store.credentialsForDevice(deviceId);
+    for (const credential of credentials) {
+      if (await verifySecret(secret, credential.secretHash)) return credential;
+    }
+    return null;
   };
 
   // ------------------------------------------------------------ error handling
@@ -258,82 +252,115 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.get("/healthz", async () => ({ status: "ok", version, time: iso(Date.now()) }));
   app.get(`${API}/health`, async () => ({ status: "ok", version, time: iso(Date.now()) }));
 
-  // --------------------------------------------------------------------- auth
+  /** What the app asks first: "are you an AirWhispers server, and what do I need?" */
+  app.get(`${API}/server`, async () => ({
+    name: "airwhispers",
+    version,
+    apiVersion: "v1",
+    realtimePath: `${API}/realtime`,
+    registrationOpen: config.allowNewDevices,
+    registration: "device", // no accounts: a device registers once and gets a code
+    codeLength: 6,
+    connectedSockets: hub.connectionCount(),
+  }));
 
-  app.post(`${API}/auth/register`, async (request, reply) => {
-    limiter.check(`register:${request.ip}`, 10, 60_000);
+  // ------------------------------------------------------------------ devices
+
+  /**
+   * One endpoint for both halves of a device's life:
+   *  - without a secret: mint a new identity + code (first launch),
+   *  - with a secret: prove this installation is known and get fresh tokens.
+   */
+  app.post(`${API}/device/register`, async (request, reply) => {
+    limiter.check(`register:${request.ip}`, 60, 60_000);
     const body = asObject(request.body);
-    const email = asEmail(body.email);
-    const password = asPassword(body.password);
-    const displayName = asString(body.displayName ?? email.split("@")[0], "displayName", { min: 1, max: 80 });
-    const deviceId = asOptionalString(body.deviceId, "deviceId", 64) ?? null;
+    const deviceId = asDeviceId(body.deviceId);
+    const platform = asOptionalString(body.platform, "platform", 20) ?? "android";
+    const appVersion = asOptionalString(body.appVersion, "appVersion", 40) ?? null;
+    const secret = asOptionalString(body.deviceSecret, "deviceSecret", 512);
 
-    if (await store.findUserByEmail(email)) throw new ConflictError("That email is already registered");
-
-    const user = await store.createUser({ email, displayName, passwordHash: await hashPassword(password) });
-    const tokens = await issueTokens(user, deviceId);
-    await store.getSettings(user.id);
-    reply.status(201);
-    return { user: userDto(user), tokens };
-  });
-
-  app.post(`${API}/auth/login`, async (request) => {
-    limiter.check(`login:${request.ip}`, 20, 60_000);
-    const body = asObject(request.body);
-    const email = asEmail(body.email);
-    const password = asString(body.password, "password", { min: 1, max: 200 });
-    const deviceId = asOptionalString(body.deviceId, "deviceId", 64) ?? null;
-
-    const user = await store.findUserByEmail(email);
-    // Always run a hash comparison so timing does not reveal whether the email exists.
-    const ok = user ? await verifyPassword(password, user.passwordHash) : await verifyPassword(password, "scrypt$16384$AAAA$AAAA");
-    if (!user || !ok) throw new AuthError("Email or password is incorrect");
-
-    const tokens = await issueTokens(user, deviceId);
-    return { user: userDto(user), tokens };
-  });
-
-  app.post(`${API}/auth/refresh`, async (request) => {
-    limiter.check(`refresh:${request.ip}`, 60, 60_000);
-    const body = asObject(request.body);
-    const token = asString(body.refreshToken, "refreshToken", { min: 10, max: 400 });
-    const hash = sha256(token);
-    const record = await store.findRefreshToken(hash);
-    if (!record || record.revokedAt !== null || record.expiresAt < Date.now()) {
-      throw new AuthError("Refresh token is not valid");
+    if (secret) {
+      const credential = await credentialFor(deviceId, secret);
+      if (!credential) throw new AuthError("This device is not recognised by this server");
+      const user = await store.findUserById(credential.userId);
+      if (!user) throw new AuthError("This device is not recognised by this server");
+      await store.touchCredential(deviceId, user.id, Date.now());
+      reply.status(200);
+      return { user: userDto(user), tokens: issueTokens(user, deviceId) };
     }
-    const user = await store.findUserById(record.userId);
-    if (!user) throw new AuthError("Refresh token is not valid");
 
-    // Rotation: the presented token dies here.
-    await store.revokeRefreshToken(hash, Date.now());
-    return await issueTokens(user, record.deviceId);
+    if (!config.allowNewDevices) {
+      throw new ForbiddenError("This server is not accepting new devices");
+    }
+
+    const displayName = asDisplayName(body.displayName ?? "Someone");
+    const user = await createIdentity(displayName);
+    const newSecret = newDeviceSecret();
+    const now = Date.now();
+    await store.saveCredential({
+      deviceId,
+      userId: user.id,
+      secretHash: await hashSecret(newSecret),
+      platform,
+      appVersion,
+      createdAt: now,
+      lastSeenAt: now,
+    });
+    request.log.info({ code: user.code }, "device.registered");
+    reply.status(201);
+    return { user: userDto(user), tokens: issueTokens(user, deviceId), deviceSecret: newSecret };
   });
 
-  app.post(`${API}/auth/logout`, async (request, reply) => {
-    const { userId } = await authenticate(request);
-    const body = request.body ? asObject(request.body) : {};
-    const token = asOptionalString(body.refreshToken, "refreshToken", 400);
-    if (token) await store.revokeRefreshToken(sha256(token), Date.now());
-    else await store.revokeAllRefreshTokens(userId);
+  /** Silent re-authentication: no UI, no user input, just a fresh access token. */
+  app.post(`${API}/device/token`, async (request) => {
+    limiter.check(`token:${request.ip}`, 120, 60_000);
+    const body = asObject(request.body);
+    const deviceId = asDeviceId(body.deviceId);
+    const secret = asString(body.deviceSecret, "deviceSecret", { min: 16, max: 512 });
+    const credential = await credentialFor(deviceId, secret);
+    if (!credential) throw new AuthError("This device is not recognised by this server");
+    const user = await store.findUserById(credential.userId);
+    if (!user) throw new AuthError("This device is not recognised by this server");
+    await store.touchCredential(deviceId, user.id, Date.now());
+    return { user: userDto(user), tokens: issueTokens(user, deviceId) };
+  });
+
+  /**
+   * Forget this identity on the server and hand out a brand-new code next time.
+   * Also drops the device's conversations from its point of view.
+   */
+  app.post(`${API}/device/forget`, async (request, reply) => {
+    limiter.check(`forget:${request.ip}`, 10, 60_000);
+    const body = asObject(request.body);
+    const deviceId = asDeviceId(body.deviceId);
+    const secret = asString(body.deviceSecret, "deviceSecret", { min: 16, max: 512 });
+    const credential = await credentialFor(deviceId, secret);
+    if (!credential) throw new AuthError("This device is not recognised by this server");
+    await store.revokeCredential(deviceId, credential.userId);
+    request.log.info({ userId: credential.userId }, "device.forgotten");
     reply.status(204);
     return null;
   });
 
-  // -------------------------------------------------------------------- users
+  // --------------------------------------------------------------------- me
 
-  app.get(`${API}/users/me`, async (request) => {
+  app.get(`${API}/me`, async (request) => {
     const { userId } = await authenticate(request);
     const user = await store.findUserById(userId);
-    if (!user) throw new NotFoundError("User not found");
+    if (!user) throw new NotFoundError("Device not found");
     return { user: userDto(user) };
   });
 
-  app.patch(`${API}/users/me`, async (request) => {
+  app.patch(`${API}/me`, async (request) => {
     const { userId } = await authenticate(request);
     const body = asObject(request.body);
-    const displayName = asOptionalString(body.displayName, "displayName", 80);
-    const user = await store.updateUser(userId, displayName ? { displayName } : {});
+    const displayName = asOptionalString(body.displayName, "displayName", 40);
+    const user = await store.updateUser(userId, displayName ? { displayName: asDisplayName(displayName) } : {});
+    // Everyone who talks to this device should see the new name.
+    hub.broadcastToUsers(await store.peerIdsOf(userId), {
+      type: "peer.updated",
+      data: { userId, displayName: user.displayName },
+    });
     return { user: userDto(user) };
   });
 
@@ -343,31 +370,32 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const { userId } = await authenticate(request);
     const conversations = await store.listConversations(userId);
     const items = await Promise.all(conversations.map((c) => conversationDto(c, userId)));
-    items.sort((a, b) => (b.lastMessage?.createdAt ?? "").localeCompare(a.lastMessage?.createdAt ?? ""));
+    items.sort((a, b) => (b.lastMessage?.createdAt ?? b.createdAt).localeCompare(a.lastMessage?.createdAt ?? a.createdAt));
     return { conversations: items };
   });
 
+  /** Open (or create) a chat with the device that owns `code`. */
   app.post(`${API}/conversations`, async (request, reply) => {
     const { userId } = await authenticate(request);
-    limiter.check(`conversation:${userId}`, 60, 60_000);
+    limiter.check(`chat:${userId}`, 60, 60_000);
     const body = asObject(request.body);
-    const peerUserId = asUuid(body.peerUserId, "peerUserId");
-    if (peerUserId === userId) throw new ValidationError("You cannot start a conversation with yourself");
-    const peer = await store.findUserById(peerUserId);
-    if (!peer) throw new NotFoundError("That user does not exist");
+    const code = normaliseCode(asCode(body.code));
+    const peer = await store.findUserByCode(code);
+    if (!peer) throw new NotFoundError("No device is using that code");
+    if (peer.id === userId) throw new ValidationError("That code is this device");
 
-    const conversation = await store.getOrCreateConversation(userId, peerUserId);
+    const conversation = await store.getOrCreateConversation(userId, peer.id);
     reply.status(201);
     return { conversation: await conversationDto(conversation, userId) };
   });
 
   app.get(`${API}/conversations/:id/messages`, async (request) => {
     const { userId } = await authenticate(request);
-    const conversationId = idParam(request.params, "id");
+    const params = request.params as { id: string };
     const query = request.query as { limit?: string };
     const limit = Math.min(Math.max(Number(query.limit ?? 100) || 100, 1), 200);
-    await requireConversation(conversationId, userId);
-    const messages = await store.listMessages(conversationId, limit);
+    await requireConversation(params.id, userId);
+    const messages = await store.listMessages(params.id, limit);
 
     // Seeing the history implies delivery; read receipts stay explicit.
     await Promise.all(
@@ -375,14 +403,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         .filter((m) => m.recipientId === userId && m.deliveredAt === null)
         .map((m) => store.markMessageDelivered(m.id, Date.now())),
     );
-    return { messages: messages.map(messageDto) };
+    const peerId = messages.find((m) => m.recipientId === userId)?.senderId ?? null;
+    const speakable = peerId ? (await store.findTrust(userId, peerId))?.trusted === true : false;
+    return { messages: messages.map((m) => messageDto(m, speakable)) };
   });
 
   app.post(`${API}/conversations/:id/messages`, async (request, reply) => {
     const { userId } = await authenticate(request);
     limiter.check(`send:${userId}`, 120, 60_000);
-    const conversation = await requireConversation(idParam(request.params, "id"), userId);
+    const params = request.params as { id: string };
     const body = asObject(request.body);
+    const conversation = await requireConversation(params.id, userId);
 
     const clientMessageId = asString(body.clientMessageId, "clientMessageId", { min: 4, max: 120 });
     const text = asMessageText(body.text);
@@ -405,15 +436,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       spokenAt: null,
     });
 
+    // Consent is owned by the listener: the sender only learns whether it may
+    // be spoken, never forces it.
+    const recipientAllowsSpeech = (await store.findTrust(recipientId, userId))?.trusted === true;
+
     if (created) {
       const sender = await store.findUserById(userId);
-      const dto = messageDto(message);
+      const dto = messageDto(message, recipientAllowsSpeech);
       // Fast path: anyone with an open socket (sender's other devices + recipient).
       hub.broadcastToUsers([recipientId, userId], { type: "message.created", data: dto });
 
       // Slow path: cloud push for devices that are not connected.
       const devices = await store.devicesForUsers([recipientId]);
-      if (devices.length > 0) {
+      if (devices.length > 0 && !hub.isOnline(recipientId)) {
         const data: Record<string, string> = {
           type: "message.created",
           conversationId: message.conversationId,
@@ -434,12 +469,38 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }
 
     reply.status(created ? 201 : 200);
-    return { message: messageDto(message) };
+    return { message: messageDto(message, recipientAllowsSpeech) };
+  });
+
+  /**
+   * Speech consent, per peer: "you may whisper to this device".
+   * Only the owner of the device being spoken to can set it.
+   */
+  app.patch(`${API}/conversations/:id/trust`, async (request) => {
+    const { userId } = await authenticate(request);
+    limiter.check(`trust:${userId}`, 60, 60_000);
+    const params = request.params as { id: string };
+    const body = asObject(request.body);
+    const trusted = asOptionalBoolean(body.trusted, "trusted");
+    if (trusted === undefined) throw new ValidationError("trusted must be true or false");
+
+    const conversation = await requireConversation(params.id, userId);
+    const peerId = conversation.memberIds.find((id) => id !== userId);
+    if (!peerId) throw new ValidationError("Conversation has no peer");
+
+    await store.setTrust(userId, peerId, trusted);
+    hub.broadcastToUsers([peerId], {
+      type: "peer.updated",
+      data: { userId, allowsSpeak: trusted },
+    });
+    if (peerId) hub.broadcastToUsers([peerId], { type: "conversation.updated", data: { conversationId: conversation.id } });
+    return { conversation: await conversationDto(conversation, userId) };
   });
 
   app.post(`${API}/messages/:id/read`, async (request, reply) => {
     const { userId } = await authenticate(request);
-    const message = await store.findMessage(idParam(request.params, "id"));
+    const params = request.params as { id: string };
+    const message = await store.findMessage(params.id);
     if (!message) throw new NotFoundError("Message not found");
     if (message.recipientId !== userId) throw new ForbiddenError("Only the recipient can mark a message read");
 
@@ -456,11 +517,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   /**
    * Call Assist feedback: the recipient's phone actually spoke the message.
-   * Purely informational for the sender ("read aloud"), never a delivery gate.
+   * Purely informational for the sender ("whispered"), never a delivery gate.
    */
   app.post(`${API}/messages/:id/spoken`, async (request, reply) => {
     const { userId } = await authenticate(request);
-    const message = await store.findMessage(idParam(request.params, "id"));
+    const params = request.params as { id: string };
+    const message = await store.findMessage(params.id);
     if (!message) throw new NotFoundError("Message not found");
     if (message.recipientId !== userId) throw new ForbiddenError("Only the recipient can report speech");
 
@@ -468,110 +530,18 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     await store.markMessageSpoken(message.id, now);
     const refreshed = await store.findMessage(message.id);
     if (refreshed) {
-      hub.broadcastToUsers([message.senderId], { type: "message.updated", data: messageDto(refreshed) });
+      hub.broadcastToUsers([message.senderId], { type: "message.updated", data: messageDto(refreshed, true) });
     }
     reply.status(204);
     return null;
   });
 
-  // ---------------------------------------------------------------- contacts
-
-  app.get(`${API}/contacts`, async (request) => {
-    const { userId } = await authenticate(request);
-    const contacts = await store.listContacts(userId);
-    const conversations = await store.listConversations(userId);
-    const items = [];
-    for (const contact of contacts) {
-      const user = await store.findUserById(contact.contactUserId);
-      if (!user) continue;
-      const conversation =
-        conversations.find((c) => c.memberIds.includes(contact.contactUserId))?.id ?? null;
-      items.push(contactDto(contact, user, conversation));
-    }
-    return { contacts: items };
-  });
-
-  app.post(`${API}/contacts`, async (request, reply) => {
-    const { userId } = await authenticate(request);
-    limiter.check(`contact:${userId}`, 40, 60_000);
-    const body = asObject(request.body);
-    const email = asEmail(body.email);
-    const peer = await store.findUserByEmail(email);
-    if (!peer) throw new NotFoundError("No AirWhispers account uses that email");
-    if (peer.id === userId) throw new ValidationError("That is your own address");
-
-    // Privacy-first default: a new contact may not trigger speech.
-    const contact = await store.addContact(userId, peer.id, false);
-    const conversation = await store.getOrCreateConversation(userId, peer.id);
-    reply.status(201);
-    return { contact: contactDto(contact, peer, conversation.id) };
-  });
-
-  app.patch(`${API}/contacts/:id`, async (request) => {
-    const { userId } = await authenticate(request);
-    const peerId = idParam(request.params, "id");
-    const body = asObject(request.body);
-    const isTrusted = asOptionalBoolean(body.isTrusted, "isTrusted");
-    let contact = await store.findContact(userId, peerId);
-    if (!contact) {
-      // Trusting someone you have not explicitly added yet is a legitimate
-      // action (the chat screen offers exactly this switch).
-      const peerExists = await store.findUserById(peerId);
-      if (!peerExists) throw new NotFoundError("That user does not exist");
-      contact = await store.addContact(userId, peerId, isTrusted ?? false);
-    }
-    contact = (await store.updateContact(userId, peerId, isTrusted === undefined ? {} : { isTrusted })) ?? contact;
-    const peer = await store.findUserById(peerId);
-    if (!peer) throw new NotFoundError("Contact not found");
-    const conversations = await store.listConversations(userId);
-    const conversationId = conversations.find((c) => c.memberIds.includes(peerId))?.id ?? null;
-    return { contact: contactDto(contact, peer, conversationId) };
-  });
-
-  app.delete(`${API}/contacts/:id`, async (request, reply) => {
-    const { userId } = await authenticate(request);
-    await store.deleteContact(userId, idParam(request.params, "id"));
-    reply.status(204);
-    return null;
-  });
-
-  // ---------------------------------------------------------------- settings
-
-  app.get(`${API}/settings`, async (request) => {
-    const { userId } = await authenticate(request);
-    return { settings: settingsDto(await store.getSettings(userId)) };
-  });
-
-  app.patch(`${API}/settings`, async (request) => {
-    const { userId } = await authenticate(request);
-    const body = asObject(request.body);
-    const patch: Partial<UserSettings> = {};
-    const speakMessages = asOptionalBoolean(body.speakMessages, "speakMessages");
-    if (speakMessages !== undefined) patch.speakMessages = speakMessages;
-    const onlyDuringCalls = asOptionalBoolean(body.onlyDuringCalls, "onlyDuringCalls");
-    if (onlyDuringCalls !== undefined) patch.onlyDuringCalls = onlyDuringCalls;
-    const trustedOnly = asOptionalBoolean(body.trustedContactsOnly, "trustedContactsOnly");
-    if (trustedOnly !== undefined) patch.trustedContactsOnly = trustedOnly;
-    const preferBluetooth = asOptionalBoolean(body.preferBluetooth, "preferBluetooth");
-    if (preferBluetooth !== undefined) patch.preferBluetooth = preferBluetooth;
-    const languageTag = asOptionalString(body.languageTag, "languageTag", 16);
-    if (languageTag) patch.languageTag = languageTag;
-    const speechRate = asOptionalNumber(body.speechRate, "speechRate", 0.3, 2);
-    if (speechRate !== undefined) patch.speechRate = speechRate;
-    const pitch = asOptionalNumber(body.pitch, "pitch", 0.5, 2);
-    if (pitch !== undefined) patch.pitch = pitch;
-    if (body.emojiMode !== undefined) {
-      patch.emojiMode = asOneOf(body.emojiMode, "emojiMode", ["IGNORE", "DESCRIBE_IMPORTANT", "READ_ALL"] as const);
-    }
-    return { settings: settingsDto(await store.updateSettings(userId, patch)) };
-  });
-
-  // ----------------------------------------------------------------- devices
+  // ------------------------------------------------------------------ devices
 
   app.post(`${API}/devices`, async (request, reply) => {
     const { userId } = await authenticate(request);
     const body = asObject(request.body);
-    const deviceId = asString(body.deviceId, "deviceId", { min: 4, max: 64 });
+    const deviceId = asString(body.deviceId, "deviceId", { min: 4, max: 128 });
     const device: Device = {
       deviceId,
       userId,
@@ -603,18 +573,48 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       "message.updated",
       "message.read",
       "conversation.updated",
-      "contact.updated",
+      "peer.updated",
+      "presence.updated",
+      "typing",
       "auth.required",
       "auth.ok",
       "pong",
       "error",
     ],
+    clientFrames: ["auth", "ping", "typing"],
     connectedSockets: hub.connectionCount(),
   }));
+
+  // ------------------------------------------------------- browser test console
+
+  // A tiny page so two browser tabs (or two phones) can be paired in seconds
+  // without installing anything. It talks to exactly the same public API as the
+  // Android app; it is a demo, not the product.
+  const demoPage = loadDemoPage();
+  const serveDemo = async (_request: FastifyRequest, reply: import("fastify").FastifyReply) => {
+    if (!demoPage) {
+      reply.type("text/plain").send("The demo console is not part of this build.");
+      return;
+    }
+    reply.type("text/html; charset=utf-8").send(demoPage);
+  };
+  app.get("/", serveDemo);
+  app.get("/demo", serveDemo);
 
   return app;
 }
 
-/** Exported for tests that need to assert on hashing behaviour. */
-export const __testing = { hashPassword, verifyPassword, asBoolean, asNumber, asUuid, asEmail };
-export type { UserWithSecret };
+function loadDemoPage(): string | null {
+  // Works from src/ (dev) and from dist/src/ (build): try both layouts.
+  for (const relative of ["../public/index.html", "../../public/index.html"]) {
+    try {
+      return readFileSync(new URL(relative, import.meta.url), "utf8");
+    } catch {
+      // try the next candidate
+    }
+  }
+  return null;
+}
+
+/** Exported for tests that need to assert on code handling. */
+export const __testing = { normaliseCode, asUuid };

@@ -5,10 +5,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.airwhispers.AppContainer
 import com.airwhispers.core.AppError
+import com.airwhispers.core.AppResult
+import com.airwhispers.data.model.CallAssistSettings
 import com.airwhispers.data.model.CallDetectionCapability
 import com.airwhispers.data.model.CallStatus
-import com.airwhispers.data.model.CallAssistSettings
-import com.airwhispers.data.model.Contact
 import com.airwhispers.data.model.Conversation
 import com.airwhispers.data.model.EmojiMode
 import com.airwhispers.data.model.Message
@@ -16,7 +16,9 @@ import com.airwhispers.data.model.SpeechOutput
 import com.airwhispers.data.model.SpeechSettings
 import com.airwhispers.data.prefs.SettingsStore
 import com.airwhispers.data.remote.RelayState
-import com.airwhispers.data.repo.SessionState
+import com.airwhispers.data.remote.ServerInfoDto
+import com.airwhispers.data.repo.IdentityState
+import com.airwhispers.data.repo.TypingSignal
 import com.airwhispers.domain.tts.TtsQueueSnapshot
 import com.airwhispers.service.Notifier
 import kotlinx.coroutines.flow.StateFlow
@@ -33,11 +35,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     private val repository = container.repository
 
-    val session: StateFlow<SessionState> = repository.session
+    val session: StateFlow<IdentityState> = repository.session
     val conversations: StateFlow<List<Conversation>> = repository.conversations
-    val contacts: StateFlow<List<Contact>> = repository.contacts
     val messages: StateFlow<Map<String, List<Message>>> = repository.messages
     val sessionErrors: StateFlow<Map<String, String>> = repository.lastMessageErrors
+    val typing: StateFlow<TypingSignal?> = repository.typing
 
     val callAssist: StateFlow<CallAssistSettings> = container.settingsStore.callAssist
     val speech: StateFlow<SpeechSettings> = container.settingsStore.speech
@@ -49,6 +51,13 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     val audioRoute: String get() = container.audioRouter.currentRouteDescription()
     val deviceId: String get() = container.settingsStore.deviceId
+
+    /** The code other people type to reach this phone. */
+    val myCode: String? get() = repository.myCode ?: container.settingsStore.myCode
+
+    /** `k7m2pq` → `K7M 2PQ`. */
+    val myPrettyCode: String
+        get() = myCode?.uppercase()?.replace(Regex("(.{3})(.{3})"), "$1 $2") ?: "······"
 
     init {
         container.callDetector.refreshCapability()
@@ -63,62 +72,59 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     fun onHidden() = container.onUiHidden()
 
-    // ----------------------------------------------------------------------- auth
+    // ---------------------------------------------------------------------- setup
 
     fun configureBackend(url: String) = container.settingsStore.setBackendUrl(url)
 
-    fun checkServer(onResult: (Boolean, String?) -> Unit) {
+    /**
+     * "Is this an AirWhispers server?" — checks /healthz and then asks the server
+     * what it expects. Two calls, no authentication, so a typo in the address
+     * fails here instead of confusing the user later.
+     */
+    fun checkServer(onResult: (ServerInfoDto?, AppError?) -> Unit) {
         viewModelScope.launch {
-            val result = container.api.health()
-            onResult(result is com.airwhispers.core.AppResult.Ok, (result as? com.airwhispers.core.AppResult.Err)?.error?.message)
-        }
-    }
-
-    fun signIn(email: String, password: String, onError: (AppError?) -> Unit) {
-        viewModelScope.launch {
-            val error = repository.signIn(email, password)
-            if (error == null) container.startRepositoryPipeline()
-            onError(error)
-        }
-    }
-
-    fun register(email: String, password: String, displayName: String, onError: (AppError?) -> Unit) {
-        viewModelScope.launch {
-            val error = repository.register(email, password, displayName)
-            if (error == null) container.startRepositoryPipeline()
-            onError(error)
-        }
-    }
-
-    fun signOut() = viewModelScope.launch { repository.signOut() }
-
-    // -------------------------------------------------------------------- messaging
-
-    fun openConversationWith(peerUserId: String, onOpened: (String) -> Unit) {
-        viewModelScope.launch {
-            repository.openConversationWith(peerUserId)?.let(onOpened)
-        }
-    }
-
-    /** "New chat" entry point: add the peer by email, then open the conversation. */
-    fun startChatWithEmail(
-        email: String,
-        onOpened: (String?) -> Unit,
-        onError: (AppError?) -> Unit,
-    ) {
-        viewModelScope.launch {
-            val error = repository.addContact(email)
-            if (error != null) {
-                onError(error)
-                return@launch
+            when (val health = container.api.health()) {
+                is AppResult.Err -> onResult(null, health.error)
+                is AppResult.Ok -> when (val info = container.api.serverInfo()) {
+                    is AppResult.Ok -> onResult(info.value, null)
+                    is AppResult.Err -> onResult(null, info.error)
+                }
             }
-            val contact = repository.contacts.value.firstOrNull { it.email.equals(email.trim(), true) }
-            if (contact == null) {
-                onOpened(null)
-                return@launch
+        }
+    }
+
+    /** Registers this device (or resumes it) and starts the realtime pipeline. */
+    fun completeSetup(displayName: String, onResult: (AppError?) -> Unit) {
+        viewModelScope.launch {
+            val state = repository.ensureRegistered(displayName.trim().ifBlank { null })
+            if (state.status == com.airwhispers.data.repo.IdentityStatus.READY && state.me != null) {
+                container.startRepositoryPipeline()
+                onResult(null)
+            } else {
+                onResult(state.error ?: AppError.unknown("Could not register this device"))
             }
-            val conversationId = contact.conversationId ?: repository.openConversationWith(contact.userId)
-            onOpened(conversationId)
+        }
+    }
+
+    fun setDisplayName(name: String, onResult: (AppError?) -> Unit = {}) {
+        viewModelScope.launch { onResult(repository.setDisplayName(name)) }
+    }
+
+    /** Forget this identity and register a new one: a brand-new code. */
+    fun requestNewCode(onDone: () -> Unit) {
+        viewModelScope.launch {
+            repository.regenerateIdentity()
+            container.startRepositoryPipeline()
+            onDone()
+        }
+    }
+
+    // ------------------------------------------------------------------ messaging
+
+    fun openChatWithCode(code: String, onResult: (String?, AppError?) -> Unit) {
+        viewModelScope.launch {
+            val (conversationId, error) = repository.openChatWithCode(code)
+            onResult(conversationId, error)
         }
     }
 
@@ -137,24 +143,35 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     fun refreshConversations() = viewModelScope.launch { repository.refreshConversations() }
 
-    // --------------------------------------------------------------------- contacts
+    fun notifyTyping(conversationId: String) = repository.sendTyping(conversationId)
 
-    fun addContact(email: String, onError: (AppError?) -> Unit) {
-        viewModelScope.launch { onError(repository.addContact(email)) }
+    // -------------------------------------------------------------------- consent
+
+    /** "Let this person whisper to me" — the switch Call Assist depends on. */
+    fun setSpeakAllowed(conversation: Conversation, allowed: Boolean) {
+        viewModelScope.launch { repository.setSpeakAllowed(conversation, allowed) }
     }
 
-    fun setTrusted(contact: Contact, trusted: Boolean) {
-        viewModelScope.launch { repository.setTrusted(contact, trusted) }
+    /** Allow/deny speech for every peer listed in a conversation set. */
+    fun allowAllSpeakers(conversations: List<Conversation>, allowed: Boolean) {
+        viewModelScope.launch {
+            conversations.forEach { repository.setSpeakAllowed(it, allowed) }
+        }
     }
-
-    fun deleteContact(contact: Contact) = viewModelScope.launch { repository.deleteContact(contact) }
-
-    fun refreshContacts() = viewModelScope.launch { repository.refreshContacts() }
 
     // ------------------------------------------------------------- Call Assist / TTS
 
     fun setCallAssistEnabled(enabled: Boolean) {
         container.settingsStore.updateCallAssist { it.copy(enabled = enabled) }
+    }
+
+    /** One tap from the Call Assist screen: listening on, speaking on. */
+    fun startListening() {
+        container.settingsStore.updateCallAssist { it.copy(enabled = true, speakMessages = true) }
+    }
+
+    fun stopListening() {
+        container.settingsStore.updateCallAssist { it.copy(enabled = false) }
     }
 
     fun updateCallAssist(transform: (CallAssistSettings) -> CallAssistSettings) =

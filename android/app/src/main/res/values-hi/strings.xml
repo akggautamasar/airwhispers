@@ -19,11 +19,6 @@
     <string name="auth_backend_label">सर्वर का पता</string>
     <string name="auth_backend_helper">यहाँ अपने AirWhispers सर्वर का पता डालें। अपने नेटवर्क के बाहर https:// इस्तेमाल करें।</string>
     <string name="auth_backend_insecure_warning">यह पता एन्क्रिप्टेड नहीं है (http://)। नेटवर्क पर मौजूद दूसरे लोग आपके संदेश और साइन-इन टोकन पढ़ सकते हैं।</string>
-    <string name="auth_sign_in">साइन इन</string>
-    <string name="auth_sign_up">खाता बनाएँ</string>
-    <string name="auth_forgot_password">पासवर्ड भूल गए?</string>
-    <string name="auth_email">ईमेल</string>
-    <string name="auth_password">पासवर्ड</string>
     <string name="auth_display_name">दिखने वाला नाम</string>
     <string name="auth_continue">आगे बढ़ें</string>
     <string name="auth_connecting">कनेक्ट हो रहा है…</string>
@@ -34,7 +29,8 @@
     <string name="chat_send">भेजें</string>
     <string name="chat_speak_now">अभी बोलें</string>
     <string name="chat_speak_now_description">“अभी बोलें” संदेश को चिह्नित करता है ताकि Call Assist वाला प्राप्तकर्ता उसे जल्द से जल्द सुन सके।</string>
-    <string name="chat_empty_state">अभी कोई संदेश नहीं।\nनमस्ते कहिए…</string>
+    <string name="chat_empty_state">अभी कोई संदेश नहीं।
+नमस्ते कहिए…</string>
     <string name="chat_new">नई चैट</string>
     <string name="chat_pending">भेजा जा रहा है…</string>
     <string name="chat_failed">नहीं भेजा गया। दोबारा भेजने के लिए टैप करें।</string>
@@ -46,8 +42,7 @@
     <!-- Contacts -->
     <string name="contacts_title">संपर्क</string>
     <string name="contacts_add">संपर्क जोड़ें</string>
-    <string name="contacts_search_hint">ईमेल या हैंडल से खोजें</string>
-    <string name="contacts_trusted">Call Assist के लिए विश्वसनीय</string>
+    <string name="contacts_trusted">मुझे फुसफुसा सकते हैं</string>
     <string name="contacts_empty">अभी कोई संपर्क नहीं। किसी को उनके ईमेल पते से जोड़िए।</string>
 
     <!-- Call Assist -->
@@ -60,7 +55,7 @@
     <string name="call_assist_read_aloud_summary">यह चालू न हो तो संदेश आम नोटिफ़िकेशन की तरह ही आते हैं।</string>
     <string name="call_assist_only_in_calls">सिर्फ़ कॉल के दौरान</string>
     <string name="call_assist_only_in_calls_summary">केवल तब बोलें जब कॉल या वॉइस सेशन चल रहा हो।</string>
-    <string name="call_assist_trusted_only">सिर्फ़ विश्वसनीय संपर्क</string>
+    <string name="call_assist_trusted_only">सिर्फ़ वे लोग जिन्हें मैंने अनुमति दी</string>
     <string name="call_assist_prefer_bluetooth">ब्लूटूथ को प्राथमिकता</string>
     <string name="call_assist_detection_ok">इस डिवाइस पर स्वतः कॉल पहचान उपलब्ध है (%1$s)।</string>
     <string name="call_assist_detection_unavailable">इस डिवाइस पर स्वतः कॉल पहचान उपलब्ध नहीं है। कॉल से पहले या कॉल के दौरान Call Assist खुद शुरू करें।</string>
@@ -91,10 +86,9 @@
     <string name="settings_title">सेटिंग्स</string>
     <string name="settings_privacy">प्राइवेसी</string>
     <string name="settings_notifications">नोटिफ़िकेशन</string>
-    <string name="settings_account">खाता</string>
+    <string name="settings_account">यह डिवाइस</string>
     <string name="settings_security">सुरक्षा</string>
     <string name="settings_about">ऐप के बारे में</string>
-    <string name="settings_sign_out">साइन आउट</string>
 
     <!-- Notifications -->
     <string name="notif_channel_messages">संदेश</string>
@@ -116,59 +110,7 @@
     <string name="error_generic">कुछ गड़बड़ हो गई। कृपया दोबारा कोशिश करें।</string>
     <string name="error_offline">आप ऑफ़लाइन हैं। कनेक्शन लौटते ही संदेश भेज दिए जाएँगे।</string>
     <string name="error_server_unreachable">सर्वर से संपर्क नहीं हो पा रहा।</string>
-    <string name="error_session_expired">आपका सेशन समाप्त हो गया। कृपया दोबारा साइन इन करें।</string>
     <string name="tts_unavailable">आवाज़ उपलब्ध नहीं है। जाँचिए कि Android सेटिंग्स में कोई टेक्स्ट-टू-स्पीच इंजन इंस्टॉल और चालू है।</string>
-
-    <!-- Call Assist (विस्तारित) -->
-    <string name="call_assist_stop_speech">बंद करें</string>
-    <string name="call_assist_queue_title">कतार</string>
-    <string name="call_assist_waiting_title">प्रतीक्षा: %1$d</string>
-    <string name="call_assist_spoken_count">इस सेशन में अब तक बोले गए: %1$d</string>
-    <string name="call_assist_problem_title">आवाज़ में समस्या</string>
-    <string name="call_assist_rules">नियम</string>
-    <string name="call_assist_trusted_only_summary">बाकी सब आम नोटिफ़िकेशन ही रहेंगे।</string>
-    <string name="call_assist_prefer_bluetooth_summary">जब सिस्टम ऑडियो वहाँ भेजता है तो जुड़े ईयरबड्स या हेडसेट इस्तेमाल करें।</string>
-    <string name="call_assist_capability_title">यह डिवाइस क्या पहचान सकता है</string>
-    <string name="call_assist_audio">ऑडियो</string>
-    <string name="call_assist_output_now">अभी का आउटपुट</string>
-    <string name="call_assist_whisper_mode">फुसफुसाहट मोड</string>
-    <string name="call_assist_whisper_mode_summary">ईयरफ़ोन के लिए धीमी आवाज़ (प्रयोगात्मक)।</string>
-
-    <!-- Chat (विस्तारित) -->
-    <string name="chat_conversation">बातचीत</string>
-    <string name="chat_not_spoken_here">इस डिवाइस पर बोलकर नहीं सुनाया जाता</string>
-    <string name="chats_empty_title">अभी कोई बातचीत नहीं</string>
-
-    <!-- Contacts (विस्तारित) -->
-    <string name="contacts_hint_existing_account">उनका AirWhispers खाता पहले से होना चाहिए।</string>
-
-    <!-- Settings (विस्तारित) -->
-    <string name="settings_server">सर्वर</string>
-    <string name="settings_server_not_configured">सेट नहीं है</string>
-    <string name="settings_change_server">सर्वर बदलें</string>
-    <string name="settings_notifications_reliability">नोटिफ़िकेशन और भरोसा</string>
-    <string name="settings_notification_settings">नोटिफ़िकेशन सेटिंग्स</string>
-    <string name="settings_notification_settings_summary">तय करें कि AirWhispers आपको कैसे सूचित करे।</string>
-    <string name="settings_allow_detection">कॉल पहचान की अनुमति (वैकल्पिक)</string>
-    <string name="settings_allow_detection_summary">फ़ोन कॉल के साथ Call Assist चालू हो सकता है। कॉल की सामग्री नहीं पढ़ी जाती।</string>
-    <string name="settings_battery_ignore">बैटरी ऑप्टिमाइज़ेशन अनदेखा करें</string>
-    <string name="settings_battery_ignore_summary">स्क्रीन बंद रहने पर भी संदेश बोलते रहें, इसके लिए सुझाव।</string>
-    <string name="settings_realtime">रियलटाइम कनेक्शन</string>
-    <string name="settings_device_id">डिवाइस आईडी</string>
-    <string name="settings_engine_title">यह डिवाइस इससे बोलता है</string>
-    <string name="settings_engine_summary">आपके फ़ोन का अपना टेक्स्ट-टू-स्पीच इंजन — कुछ भी क्लाउड सेवा पर नहीं भेजा जाता।</string>
-    <string name="settings_about_version">AirWhispers %1$s</string>
-    <string name="settings_about_build">बिल्ड %1$d · %2$s</string>
-    <string name="settings_docs_title">Call Assist का व्यवहार दस्तावेज़ित है</string>
-    <string name="settings_docs_summary">रिपॉज़िटरी में docs/android-limitations.md देखें।</string>
-
-    <!-- Actions (विस्तारित) -->
-    <string name="onboarding_server_reachable">सर्वर से संपर्क हो गया</string>
-    <string name="action_close">बंद करें</string>
-    <string name="action_add">जोड़ें</string>
-    <string name="action_start">शुरू करें</string>
-    <string name="action_skip_check">जाँच छोड़कर आगे बढ़ें</string>
-    <string name="auth_backend_placeholder">AirWhispers सर्वर</string>
 
     <string name="action_retry">दोबारा कोशिश</string>
     <string name="action_cancel">रद्द करें</string>

@@ -86,6 +86,20 @@ class RealtimeClient(
     fun send(frame: JsonObject): Boolean = socket?.send(frame.toString()) ?: false
 
     /**
+     * Best-effort "I am writing" ping. The server rate limits it per socket, so a
+     * keystroke storm costs one frame every 1.5s at most.
+     */
+    fun sendTyping(conversationId: String): Boolean = send(
+        buildJsonObject {
+            put("type", JsonPrimitive("typing"))
+            put(
+                "data",
+                buildJsonObject { put("conversationId", JsonPrimitive(conversationId)) },
+            )
+        },
+    )
+
+    /**
      * Opens one socket and suspends until it closes. Returns true when the socket
      * reached the authenticated state, so the caller can reset its backoff.
      */
@@ -93,9 +107,10 @@ class RealtimeClient(
         if (!connecting.compareAndSet(false, true)) return true
         var authenticated = false
         try {
-            val token = api.currentAccessToken()
+            // Refreshes silently from the device secret when the token is stale.
+            val token = api.ensureAccessToken()
             if (token.isNullOrBlank()) {
-                // No session yet — nothing to connect with; idle out quietly.
+                // No identity yet — nothing to connect with; idle out quietly.
                 _state.value = RelayState.IDLE
                 delay(5_000)
                 return true
