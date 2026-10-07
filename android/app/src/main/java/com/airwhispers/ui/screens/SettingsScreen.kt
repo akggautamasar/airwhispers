@@ -1,0 +1,317 @@
+package com.airwhispers.ui.screens
+
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import com.airwhispers.BuildConfig
+import com.airwhispers.data.model.EmojiMode
+import com.airwhispers.data.model.SpeechOutput
+import com.airwhispers.ui.AppViewModel
+import com.airwhispers.ui.components.InfoBanner
+import com.airwhispers.ui.components.SectionCard
+import com.airwhispers.ui.components.SettingRow
+import com.airwhispers.ui.components.SwitchRow
+import kotlin.math.roundToInt
+
+@Composable
+fun SettingsScreen(viewModel: AppViewModel) {
+    val context = LocalContext.current
+    val speech by viewModel.speech.collectAsState()
+    val session by viewModel.session.collectAsState()
+    val relay by viewModel.relayState.collectAsState()
+
+    var choice by remember { mutableStateOf<Choice?>(null) }
+    val phonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        SectionCard(title = "Account") {
+            SettingRow(
+                title = session.account?.displayName?.ifBlank { "Signed in" } ?: "Signed in",
+                subtitle = session.account?.email?.ifBlank { viewModel.backendUrl.value },
+            )
+            SettingRow(
+                title = "Server",
+                subtitle = viewModel.backendUrl.value.ifBlank { "Not configured" },
+            )
+            Row(Modifier.padding(horizontal = 12.dp)) {
+                TextButton(onClick = { viewModel.signOut() }) { Text("Sign out") }
+            }
+        }
+
+        SectionCard(title = "Speech") {
+            SettingRow(
+                title = "Language",
+                subtitle = speech.languageTag,
+                trailing = { Text("›") },
+                onClick = {
+                    choice = Choice.Language(
+                        current = speech.languageTag,
+                        options = listOf("en-IN", "en-US", "en-GB", "hi-IN", "en-AU", "en-SG"),
+                    )
+                },
+            )
+            LabelledSlider(
+                title = "Speed",
+                value = speech.speechRate,
+                range = 0.5f..2.0f,
+                display = String.format("%.2f×", speech.speechRate),
+                onChange = { value -> viewModel.updateSpeech { it.copy(speechRate = value) } },
+            )
+            LabelledSlider(
+                title = "Pitch",
+                value = speech.pitch,
+                range = 0.5f..2.0f,
+                display = String.format("%.2f", speech.pitch),
+                onChange = { value -> viewModel.updateSpeech { it.copy(pitch = value) } },
+            )
+            LabelledSlider(
+                title = "Pause between messages",
+                value = speech.pauseBetweenMessagesMs / 1000f,
+                range = 0f..4f,
+                display = "${(speech.pauseBetweenMessagesMs / 100f).roundToInt() / 10f}s",
+                onChange = { value ->
+                    viewModel.updateSpeech { it.copy(pauseBetweenMessagesMs = (value * 1000).toLong()) }
+                },
+            )
+            SettingRow(
+                title = "Emoji speech",
+                subtitle = AppViewModel.EMOJI_LABEL[speech.emojiMode] ?: speech.emojiMode.name,
+                trailing = { Text("›") },
+                onClick = { choice = Choice.Emoji(speech.emojiMode) },
+            )
+            SettingRow(
+                title = "Output",
+                subtitle = AppViewModel.OUTPUT_LABEL[speech.output] ?: speech.output.name,
+                trailing = { Text("›") },
+                onClick = { choice = Choice.Output(speech.output) },
+            )
+            SettingRow(
+                title = "Whisper mode",
+                subtitle = "Softer voice for earphones (experimental).",
+                trailing = {
+                    androidx.compose.material3.Switch(
+                        checked = speech.whisperMode,
+                        onCheckedChange = { value -> viewModel.updateSpeech { it.copy(whisperMode = value) } },
+                    )
+                },
+            )
+            Row(Modifier.padding(horizontal = 12.dp)) {
+                Button(onClick = { viewModel.testSpeak() }) { Text("Test voice") }
+            }
+        }
+
+        SectionCard(title = "Notifications & reliability") {
+            SettingRow(
+                title = "Notification settings",
+                subtitle = "Choose how AirWhispers may alert you.",
+                trailing = { Text("›") },
+                onClick = {
+                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    runCatching { context.startActivity(intent) }
+                },
+            )
+            SettingRow(
+                title = "Allow call detection (optional)",
+                subtitle = "Lets Call Assist start with phone calls. No call content is accessed.",
+                trailing = { Text("›") },
+                onClick = { phonePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE) },
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                SettingRow(
+                    title = "Ignore battery optimisation",
+                    subtitle = "Recommended so spoken messages keep working with the screen off.",
+                    trailing = { Text("›") },
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                            .setData(Uri.parse("package:${context.packageName}"))
+                        runCatching { context.startActivity(intent) }
+                    },
+                )
+            }
+            SettingRow(
+                title = "Realtime connection",
+                subtitle = relay.name.lowercase().replace('_', ' '),
+            )
+        }
+
+        SectionCard(title = "Privacy") {
+            InfoBanner(
+                "AirWhispers only handles its own messages, its own contacts and its own speech. " +
+                    "It never records calls, never opens the microphone, never reads WhatsApp/Telegram/Signal " +
+                    "content, and never touches another app's call audio.",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+            SettingRow(
+                title = "Device id",
+                subtitle = viewModel.deviceId,
+            )
+            SettingRow(
+                title = "This device speaks with",
+                subtitle = "Your phone's own text-to-speech engine — nothing is sent to a cloud service.",
+            )
+        }
+
+        SectionCard(title = "About") {
+            SettingRow(
+                title = "AirWhispers ${BuildConfig.VERSION_NAME}",
+                subtitle = "Build ${BuildConfig.VERSION_CODE} · ${BuildConfig.FLAVOR}",
+            )
+            SettingRow(
+                title = "Call Assist behaviour is documented",
+                subtitle = "See docs/android-limitations.md in the repository.",
+            )
+        }
+    }
+
+    choice?.let { selection ->
+        ChoiceDialog(
+            choice = selection,
+            onDismiss = { choice = null },
+            onSelectLanguage = { tag ->
+                viewModel.updateSpeech { it.copy(languageTag = tag) }
+                choice = null
+            },
+            onSelectEmoji = { mode ->
+                viewModel.updateSpeech { it.copy(emojiMode = mode) }
+                choice = null
+            },
+            onSelectOutput = { output ->
+                viewModel.updateSpeech { it.copy(output = output) }
+                choice = null
+            },
+        )
+    }
+}
+
+private sealed interface Choice {
+    data class Language(val current: String, val options: List<String>) : Choice
+    data class Emoji(val current: EmojiMode) : Choice
+    data class Output(val current: SpeechOutput) : Choice
+}
+
+@Composable
+private fun ChoiceDialog(
+    choice: Choice,
+    onDismiss: () -> Unit,
+    onSelectLanguage: (String) -> Unit,
+    onSelectEmoji: (EmojiMode) -> Unit,
+    onSelectOutput: (SpeechOutput) -> Unit,
+) {
+    val (title, options, select) = when (choice) {
+        is Choice.Language -> Triple(
+            "Language",
+            choice.options,
+            { value: String -> onSelectLanguage(value) },
+        )
+        is Choice.Emoji -> Triple(
+            "Emoji speech",
+            EmojiMode.entries.map { it.name },
+            { value: String -> onSelectEmoji(EmojiMode.valueOf(value)) },
+        )
+        is Choice.Output -> Triple(
+            "Output",
+            SpeechOutput.entries.map { it.name },
+            { value: String -> onSelectOutput(SpeechOutput.valueOf(value)) },
+        )
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                options.forEach { option ->
+                    val label = when (choice) {
+                        is Choice.Emoji -> AppViewModel.EMOJI_LABEL[EmojiMode.valueOf(option)] ?: option
+                        is Choice.Output -> AppViewModel.OUTPUT_LABEL[SpeechOutput.valueOf(option)] ?: option
+                        else -> option
+                    }
+                    val selected = when (choice) {
+                        is Choice.Language -> choice.current == option
+                        is Choice.Emoji -> choice.current.name == option
+                        is Choice.Output -> choice.current.name == option
+                    }
+                    TextButton(
+                        onClick = { select(option) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            (if (selected) "● " else "○ ") + label,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+                }
+                if (choice is Choice.Output) {
+                    Spacer(Modifier.height(6.dp))
+                    InfoBanner(
+                        "Android routes spoken messages through the normal media output. When earphones are " +
+                            "connected they are used automatically; AirWhispers will not force the loudspeaker " +
+                            "because that can change the routing of the call you are on.",
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun LabelledSlider(
+    title: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    display: String,
+    onChange: (Float) -> Unit,
+) {
+    Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(display, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Slider(
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = onChange,
+            valueRange = range,
+        )
+    }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "airwhispers-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AirWhispers messaging + Call Assist backend (REST + WebSocket + push)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
+    "dev": "node --watch --experimental-strip-types src/server.ts",
+    "test": "npm run build && node --test dist/tests/",
+    "schema": "node --experimental-strip-types scripts/apply-schema.ts"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0",
+    "pg": "^8.11.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.4.0"
+  }
+}

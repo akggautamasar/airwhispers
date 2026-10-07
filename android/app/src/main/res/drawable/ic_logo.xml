@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-app mark: white bubble with an accent waveform. Used on dark surfaces. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="72dp"
+    android:height="72dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M38,30 H70 A8,8 0 0 1 78,38 V58 A8,8 0 0 1 70,66 H52 L38,78 V66 A8,8 0 0 1 30,58 V38 A8,8 0 0 1 38,30 Z" />
+    <path
+        android:fillColor="#FF22D3EE"
+        android:pathData="M43,45 h4 v6 h-4 Z M49,41 h4 v14 h-4 Z M55,38 h4 v20 h-4 Z M61,43 h4 v10 h-4 Z" />
+</vector>
