@@ -31,6 +31,12 @@ export interface StoreUnderTest {
   store: Store;
   label: string;
   close: () => Promise<void>;
+  /**
+   * Runs one statement straight against the pool, bypassing the store guards.
+   * The contract uses it to prove that PostgreSQL really does reject a
+   * malformed id (22P02) — otherwise the guards would be superstition.
+   */
+  rawQuery: (sql: string, params?: unknown[]) => Promise<unknown>;
 }
 
 export function hasTestDatabase(): boolean {
@@ -73,7 +79,12 @@ export async function makeStore(): Promise<StoreUnderTest> {
     `TRUNCATE messages, conversation_members, conversations, contacts, devices,
               user_settings, refresh_tokens, users CASCADE`,
   );
-  return { store: new PgStore(pool), label: "postgres", close: () => pool.end() };
+  return {
+    store: new PgStore(pool),
+    label: "postgres",
+    close: () => pool.end(),
+    rawQuery: async (sql, params = []) => pool.query(sql, params),
+  };
 }
 
 /** Every assertion the store interface promises. */
@@ -293,6 +304,18 @@ export async function runStoreContract(t: StoreUnderTest): Promise<void> {
   assert.deepEqual(await store.listMessages(garbage, 50), [], "malformed conversation id in listMessages");
   assert.equal(await store.findContact(garbage, asha.id), null, "malformed owner id");
   assert.equal(await store.findContact(asha.id, garbage), null, "malformed contact id");
+
+  // ...and that is not superstition: the database really does refuse a
+  // malformed uuid where the column is `uuid`-typed, which is exactly the 500
+  // the guards above keep from ever happening.
+  await assert.rejects(
+    () => t.rawQuery(`SELECT * FROM users WHERE id = $1`, [garbage]),
+    (error: NodeJS.ErrnoException) => {
+      assert.equal(error.code, "22P02", `expected a uuid syntax error, got ${String(error.code)}`);
+      return true;
+    },
+    "raw query with a malformed uuid must be rejected by PostgreSQL",
+  );
 
   // Idempotent mutations are a no-op for an unknown id, not an error.
   await store.markMessageDelivered(garbage, now);
