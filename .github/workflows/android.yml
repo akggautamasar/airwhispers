@@ -168,14 +168,20 @@ jobs:
       - name: Compose release notes
         run: |
           cat > notes.md <<'NOTES'
-          ## AirWhispers for Android
+          ## AirWhispers for Android — messages you can hear
 
-          Hands-free messaging: while you are on a call in WhatsApp, Telegram, Meet,
-          Discord, Signal or the dialer, incoming AirWhispers messages can be spoken
-          aloud through your speaker, wired headset or Bluetooth earbuds.
+          While you are on a call in WhatsApp, Telegram, Instagram, Meet, Discord, Signal
+          or the dialer, incoming AirWhispers messages can be spoken *quietly* to you
+          through your speaker, wired earphones or Bluetooth earbuds. You never have to
+          look at the phone.
+
+          **No login.** No account, no email, no password, no phone number. The server
+          hands this phone a random six-character code, and that code is your address.
+          Older releases on this page shipped the retired login-based build — install
+          **this** one (it is the newest).
 
           ### Install
-          1. Download `app-standalone-release.apk` (signed) below.
+          1. Download `app-standalone-release.apk` (signed) below. This is the app.
           2. On the phone, allow "Install unknown apps" for your browser/file manager.
           3. Open the app, type the address of an AirWhispers server, then your name.
              There is **no account, no email, no password**: the server hands this phone a
