@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Languages the UI ships with. Declaring them here lets Android 13+ show AirWhispers in
+  Settings → Apps → AirWhispers → Language, so the user can pick the interface language
+  without changing the whole phone.
+
+  The *speech* language is a separate setting (Settings → Speech → Language) because the
+  interface language and the language you want read aloud are not always the same.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="hi" />
+</locale-config>

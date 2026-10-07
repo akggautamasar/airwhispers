@@ -128,6 +128,32 @@ ducking audio focus, calls `AndroidTtsSynthesizer.speak()` (attributes `USAGE_ME
 callback, abandons focus, waits the configured inter-message pause, then takes the next item.
 The queue is strictly sequential — the engine refuses a second concurrent utterance.
 
+## Branding layer and localisation
+
+The product name is never hard-coded into logic:
+
+| Where | What lives there |
+| --- | --- |
+| `config/ProductConfig.kt` | Product name, tagline, "Call Assist" label, feature flags and limits — the only Kotlin file that names the product |
+| `res/values/strings.xml` | Every user-visible string, including the `brand_*` group read by the UI |
+| `app/build.gradle.kts` | `applicationId`, version name/code (overridable with `-Pairwhispers.versionName=…`) |
+| Release notes / docs | Product name in prose only |
+
+Renaming the product is therefore a one-file change plus a `strings.xml` edit, and nothing in
+the speech pipeline, backend or tests refers to the brand.
+
+Localisation:
+
+* `values/strings.xml` (English) and `values-hi/strings.xml` (Hindi) carry identical key sets —
+  98 strings each, checked by comparing the two files.
+* `res/xml/locales_config.xml` declares `en` and `hi` and is referenced from the manifest
+  (`android:localeConfig`), so Android 13+ offers *Settings → Apps → AirWhispers → Language*.
+* The **interface** language and the **speech** language are deliberately separate settings: a
+  user may read the UI in English and still want Hindi speech (`SpeechSettings.languageTag`,
+  default `en-IN`), or vice versa.
+* Hinglish is handled where it matters — in the text normaliser's abbreviation rules — rather
+  than by pretending it is a locale.
+
 ## Data model
 
 `backend/sql/schema.sql` (PostgreSQL) and `LocalStore` (SQLite) intentionally mirror each

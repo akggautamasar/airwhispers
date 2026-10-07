@@ -103,6 +103,7 @@ Production: set `DATABASE_URL`, `JWT_SECRET` and run `npm run schema && npm star
 ## What AirWhispers does — and does not do
 
 **Does**: private 1-to-1 messaging, realtime + push delivery, trusted-contact rules,
+English and Hindi UI (per-app language on Android 13+) and English/Hindi/Hinglish speech,
 a sequential speech queue with pause/skip/stop, natural text normalisation
 (`"I love you ❤️😂"` → *"I love you."*), Bluetooth-aware audio, work with the screen off.
 

@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hindi (hi) UI strings.
+
+  The speech pipeline is language-agnostic (speech language is chosen separately in
+  Settings → Speech), and the normaliser already handles Hinglish; this file makes the
+  *interface* readable in Hindi as well. Brand names stay in Latin script on purpose —
+  a brand is not translated, it is localised as-is.
+-->
+<resources>
+    <string name="app_name">AirWhispers</string>
+    <string name="brand_tagline">संदेश जो सुनाई दें</string>
+    <string name="brand_product_short">AirWhispers</string>
+    <string name="brand_call_assist">Call Assist</string>
+
+    <!-- Auth -->
+    <string name="auth_welcome_title">AirWhispers में आपका स्वागत है</string>
+    <string name="auth_welcome_subtitle">कॉल पर रहते हुए भी अपने संदेश सुनें।</string>
+    <string name="auth_backend_label">सर्वर का पता</string>
+    <string name="auth_backend_helper">यहाँ अपने AirWhispers सर्वर का पता डालें। अपने नेटवर्क के बाहर https:// इस्तेमाल करें।</string>
+    <string name="auth_backend_insecure_warning">यह पता एन्क्रिप्टेड नहीं है (http://)। नेटवर्क पर मौजूद दूसरे लोग आपके संदेश और साइन-इन टोकन पढ़ सकते हैं।</string>
+    <string name="auth_sign_in">साइन इन</string>
+    <string name="auth_sign_up">खाता बनाएँ</string>
+    <string name="auth_forgot_password">पासवर्ड भूल गए?</string>
+    <string name="auth_email">ईमेल</string>
+    <string name="auth_password">पासवर्ड</string>
+    <string name="auth_display_name">दिखने वाला नाम</string>
+    <string name="auth_continue">आगे बढ़ें</string>
+    <string name="auth_connecting">कनेक्ट हो रहा है…</string>
+
+    <!-- Chat -->
+    <string name="chats_title">चैट</string>
+    <string name="chat_input_hint">संदेश</string>
+    <string name="chat_send">भेजें</string>
+    <string name="chat_speak_now">अभी बोलें</string>
+    <string name="chat_speak_now_description">“अभी बोलें” संदेश को चिह्नित करता है ताकि Call Assist वाला प्राप्तकर्ता उसे जल्द से जल्द सुन सके।</string>
+    <string name="chat_empty_state">अभी कोई संदेश नहीं।\nनमस्ते कहिए…</string>
+    <string name="chat_new">नई चैट</string>
+    <string name="chat_pending">भेजा जा रहा है…</string>
+    <string name="chat_failed">नहीं भेजा गया। दोबारा भेजने के लिए टैप करें।</string>
+    <string name="chat_sent">भेजा गया</string>
+    <string name="chat_delivered">पहुँच गया</string>
+    <string name="chat_read">पढ़ा गया</string>
+    <string name="chat_spoken">पढ़कर सुनाया गया</string>
+
+    <!-- Contacts -->
+    <string name="contacts_title">संपर्क</string>
+    <string name="contacts_add">संपर्क जोड़ें</string>
+    <string name="contacts_search_hint">ईमेल या हैंडल से खोजें</string>
+    <string name="contacts_trusted">Call Assist के लिए विश्वसनीय</string>
+    <string name="contacts_empty">अभी कोई संपर्क नहीं। किसी को उनके ईमेल पते से जोड़िए।</string>
+
+    <!-- Call Assist -->
+    <string name="call_assist_title">Call Assist</string>
+    <string name="call_assist_active">Call Assist चालू है</string>
+    <string name="call_assist_inactive">Call Assist बंद है</string>
+    <string name="call_assist_start">Call Assist शुरू करें</string>
+    <string name="call_assist_stop">Call Assist बंद करें</string>
+    <string name="call_assist_read_aloud">आने वाले संदेश बोलें</string>
+    <string name="call_assist_read_aloud_summary">यह चालू न हो तो संदेश आम नोटिफ़िकेशन की तरह ही आते हैं।</string>
+    <string name="call_assist_only_in_calls">सिर्फ़ कॉल के दौरान</string>
+    <string name="call_assist_only_in_calls_summary">केवल तब बोलें जब कॉल या वॉइस सेशन चल रहा हो।</string>
+    <string name="call_assist_trusted_only">सिर्फ़ विश्वसनीय संपर्क</string>
+    <string name="call_assist_prefer_bluetooth">ब्लूटूथ को प्राथमिकता</string>
+    <string name="call_assist_detection_ok">इस डिवाइस पर स्वतः कॉल पहचान उपलब्ध है (%1$s)।</string>
+    <string name="call_assist_detection_unavailable">इस डिवाइस पर स्वतः कॉल पहचान उपलब्ध नहीं है। कॉल से पहले या कॉल के दौरान Call Assist खुद शुरू करें।</string>
+    <string name="call_assist_now_speaking">%1$s के संदेश बोले जा रहे हैं</string>
+    <string name="call_assist_queue">कतार में: %1$d</string>
+    <string name="call_assist_pause">रोकें</string>
+    <string name="call_assist_resume">जारी रखें</string>
+    <string name="call_assist_skip">छोड़ें</string>
+    <string name="call_assist_clear_queue">कतार खाली करें</string>
+    <string name="call_assist_idle">कतार में कुछ नहीं है।</string>
+
+    <!-- TTS settings -->
+    <string name="settings_tts">आवाज़</string>
+    <string name="settings_tts_language">भाषा</string>
+    <string name="settings_tts_speed">गति</string>
+    <string name="settings_tts_pitch">सुर</string>
+    <string name="settings_tts_voice">वॉइस</string>
+    <string name="settings_tts_output">आउटपुट</string>
+    <string name="settings_tts_pause_between">संदेशों के बीच ठहराव</string>
+    <string name="settings_tts_emoji">इमोजी बोलना</string>
+    <string name="emoji_ignore">इमोजी छोड़ दें</string>
+    <string name="emoji_describe">ज़रूरी इमोजी बता दें</string>
+    <string name="emoji_read_all">सभी इमोजी पढ़ें</string>
+    <string name="settings_tts_test">आवाज़ जाँचें</string>
+    <string name="settings_tts_preview_text">संदेश ऐसा सुनाई देगा।</string>
+
+    <!-- Settings -->
+    <string name="settings_title">सेटिंग्स</string>
+    <string name="settings_privacy">प्राइवेसी</string>
+    <string name="settings_notifications">नोटिफ़िकेशन</string>
+    <string name="settings_account">खाता</string>
+    <string name="settings_security">सुरक्षा</string>
+    <string name="settings_about">ऐप के बारे में</string>
+    <string name="settings_sign_out">साइन आउट</string>
+
+    <!-- Notifications -->
+    <string name="notif_channel_messages">संदेश</string>
+    <string name="notif_channel_messages_desc">आने वाले संदेशों के नोटिफ़िकेशन।</string>
+    <string name="notif_channel_call_assist">Call Assist</string>
+    <string name="notif_channel_call_assist_desc">बताता है कि Call Assist बोलने के लिए संदेशों पर नज़र रख रहा है।</string>
+    <string name="notif_channel_errors">समस्याएँ</string>
+    <string name="notif_channel_errors_desc">कनेक्शन और आवाज़ से जुड़ी समस्याएँ जो आपको पता होनी चाहिए।</string>
+
+    <!-- Permissions -->
+    <string name="perm_notifications_title">नोटिफ़िकेशन</string>
+    <string name="perm_notifications_rationale">नए संदेशों की सूचना देने और Call Assist को दिखाते रहने के लिए AirWhispers को नोटिफ़िकेशन की अनुमति चाहिए।</string>
+    <string name="perm_phone_state_title">कॉल पहचान (वैकल्पिक)</string>
+    <string name="perm_phone_state_rationale">फ़ोन कॉल शुरू होते ही Call Assist खुद चालू हो सकता है। कॉल की आवाज़ या सामग्री कभी नहीं पढ़ी जाती।</string>
+    <string name="perm_battery_title">बैटरी ऑप्टिमाइज़ेशन</string>
+    <string name="perm_battery_rationale">स्क्रीन बंद रहने पर भी संदेश बोलते रहें, इसके लिए यह सुझाव दिया जाता है।</string>
+
+    <!-- Errors / states -->
+    <string name="error_generic">कुछ गड़बड़ हो गई। कृपया दोबारा कोशिश करें।</string>
+    <string name="error_offline">आप ऑफ़लाइन हैं। कनेक्शन लौटते ही संदेश भेज दिए जाएँगे।</string>
+    <string name="error_server_unreachable">सर्वर से संपर्क नहीं हो पा रहा।</string>
+    <string name="error_session_expired">आपका सेशन समाप्त हो गया। कृपया दोबारा साइन इन करें।</string>
+    <string name="tts_unavailable">आवाज़ उपलब्ध नहीं है। जाँचिए कि Android सेटिंग्स में कोई टेक्स्ट-टू-स्पीच इंजन इंस्टॉल और चालू है।</string>
+
+    <string name="action_retry">दोबारा कोशिश</string>
+    <string name="action_cancel">रद्द करें</string>
+    <string name="action_save">सहेजें</string>
+    <string name="action_ok">ठीक है</string>
+    <string name="action_back">वापस</string>
+    <string name="action_copy">कॉपी करें</string>
+</resources>
