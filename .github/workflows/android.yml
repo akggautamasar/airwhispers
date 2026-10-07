@@ -167,9 +167,16 @@ jobs:
           ### Install
           1. Download `app-standalone-release.apk` (signed) below.
           2. On the phone, allow "Install unknown apps" for your browser/file manager.
-          3. Open the app, enter the address of your AirWhispers server, create an account.
-          4. Call Assist → **Start Call Assist**. Add your chat partner as a *trusted* contact.
-          5. Get a message while on a call: it is spoken to you. Nothing else to do.
+          3. Open the app, type the address of an AirWhispers server, then your name.
+             There is **no account, no email, no password**: the server hands this phone a
+             six-character code, and that code is your address from then on.
+          4. Tap the code to copy it and send it to your friend; type their code under
+             ✏️ to open the chat. In the chat header, switch the mute icon to
+             **🔊 whispers on** so their messages may be spoken on this phone.
+          5. Call Assist → **Start listening**. While you are on a call in WhatsApp,
+             Telegram, Meet, Discord or the dialer, messages from people you allow are
+             spoken *quietly* (Whisper mode, on by default) through your earbuds,
+             headset or speaker.
 
           ### Notes
           * `app-standalone-release.apk` — recommended. No Google/Firebase account needed;
@@ -178,8 +185,12 @@ jobs:
           * Verify the download with the matching `.sha256` file.
           * AirWhispers never records calls, never opens the microphone and never touches
             another app's call audio. It speaks to *you*, the person holding this phone.
+          * **Whisper mode** (Settings → Speech, on by default) keeps the voice low so it is
+            meant for earbuds or the phone at your ear, not for the room.
           * Automatic call detection is a documented heuristic — see
-            `docs/android-limitations.md`. A manual "Start Call Assist" switch always works.
+            `docs/android-limitations.md`. The manual "Start listening" switch always works.
+          * The server is not included: run your own with `cd backend && npm ci && npm run dev`,
+            or ask whoever gave you the address. See `docs/quickstart.md`.
 
           ### iOS
           Android ships today. iOS shares the same backend and protocol; see
