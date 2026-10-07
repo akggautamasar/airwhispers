@@ -73,8 +73,14 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          VERSION="${VERSION_NAME:-}"
+          if [ -z "$VERSION" ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"; VERSION="${VERSION#android-v}"; VERSION="${VERSION#v}"
+          fi
+          VERSION="${VERSION:-1.0.0}"
+          echo "Building version $VERSION (code ${{ github.run_number }})"
           gradle --no-daemon --stacktrace assembleStandaloneRelease \
-            -Pairwhispers.versionName="${VERSION_NAME:-1.0.0}" \
+            -Pairwhispers.versionName="$VERSION" \
             -Pairwhispers.versionCode="${{ github.run_number }}" \
             2>&1 | tee "$GITHUB_WORKSPACE/build-logs/assemblestandalonerelease.log"
 
@@ -85,8 +91,12 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          VERSION="${VERSION_NAME:-}"
+          if [ -z "$VERSION" ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"; VERSION="${VERSION#android-v}"; VERSION="${VERSION#v}"
+          fi
           gradle --no-daemon --stacktrace assembleStandaloneDebug \
-            -Pairwhispers.versionName="${VERSION_NAME:-1.0.0}" \
+            -Pairwhispers.versionName="${VERSION:-1.0.0}" \
             -Pairwhispers.versionCode="${{ github.run_number }}" \
             2>&1 | tee "$GITHUB_WORKSPACE/build-logs/assemblestandalonedebug.log"
 
