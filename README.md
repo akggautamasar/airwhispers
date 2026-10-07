@@ -86,9 +86,14 @@ git push origin android-v1.0.2        # builds, tests, signs and publishes the A
 ```
 
 A tag push (or a manual `workflow_dispatch`, available once this workflow is on the default
-branch) runs the unit tests, assembles the `standalone` release and debug APKs plus the
-optional `fcm` flavour, records SHA-256 checksums, and creates a GitHub Release with all of
-them attached. Published so far: `android-v1.0.0`, `android-v1.0.1`.
+branch) runs, in order: the unit tests, **Android lint** (API-level and permission
+correctness), the APK builds for the `standalone` release/debug and the optional `fcm`
+flavour, **verification of the built APK** (signature, package id, version, and a byte-level
+check that the Hindi resources shipped), SHA-256 checksums, and finally a GitHub Release with
+all of them attached.
+
+Releases cut from this branch: `android-v1.0.0`, `android-v1.0.1`, `android-v1.1.0`,
+`android-v1.1.1`.
 
 Two product flavors:
 
