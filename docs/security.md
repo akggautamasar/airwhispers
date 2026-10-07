@@ -128,8 +128,15 @@ than not implementing it, so v1 documents the path instead of shipping a hand-ro
 
 Deliberately **absent**: `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `READ_CALL_LOG`, `READ_CONTACTS`,
 `READ_SMS`, `SYSTEM_ALERT_WINDOW`, `QUERY_ALL_PACKAGES`, `BLUETOOTH_CONNECT`, and any
-accessibility service. The full permission list is ten entries long — the manifest is the
-source of truth and the list above is kept in sync with it.
+accessibility service. The full permission list is **nine** entries long, and the table above
+is not maintained by hand: `.github/scripts/check-permissions.py` compares it with the
+manifest on every CI run and fails if either side drifts, then checks the *shipped* APK —
+where libraries can merge permissions in — against the absent list above.
+
+`WAKE_LOCK` used to be declared and was removed: no code path ever acquired a wake lock
+(audio playback holds its own) and an unused permission is a promise the app does not keep.
+The same check reports, as a build annotation, any permission that reaches the APK from a
+library rather than from this app.
 
 `MODIFY_AUDIO_SETTINGS` deserves a note: it is the permission that would allow changing the
 *communication* device or the audio mode. Requesting it would look like capability the app is

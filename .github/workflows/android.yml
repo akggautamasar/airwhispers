@@ -34,6 +34,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A privacy claim nobody checks is a claim that drifts. This fails fast,
+      # before the SDK is even installed, when the manifest and docs/security.md
+      # disagree about what the app asks for.
+      - name: Check the permission manifest against docs/security.md
+        run: python3 .github/scripts/check-permissions.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -166,6 +172,14 @@ jobs:
           else
             echo "aapt2 not found, skipping manifest checks"
           fi
+          echo "::endgroup::"
+
+          echo "::group::Shipped permissions"
+          # What a user installs is the *merged* manifest: a library can add a
+          # permission the app never declared, which would quietly falsify the
+          # table in docs/security.md. This checks the APK itself and reports
+          # anything that came in from a dependency.
+          python3 .github/scripts/check-permissions.py --apk "$APK"
           echo "::endgroup::"
 
           echo "::group::Signature"
